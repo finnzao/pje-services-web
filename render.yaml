@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pje-services-web
+    runtime: node
+    rootDir: backend
+    buildCommand: pnpm install && pnpm build
+    startCommand: node dist/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: CORS_ORIGIN
+        value: https://pje-services-web-frontend.vercel.app
+    healthCheckPath: /api/health

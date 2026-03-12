@@ -8,6 +8,9 @@ import {
 } from '../../../shared/pje-api-client';
 import { ParallelPool } from '../../../shared/parallel-pool';
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const CORS_ORIGIN = IS_PRODUCTION ? 'https://pje-services-web-frontend.vercel.app' : '*';
+
 const PARALLEL_SLOTS = 3;
 const REQUEST_STAGGER_MS = 500;
 const MAX_STREAMS_PER_USER = 1;
@@ -104,7 +107,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
       if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem um download em andamento.', statusCode: 429 } });
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
-      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' });
+      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': CORS_ORIGIN });
       const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* closed */ } };
       let cancelled = false;
       request.raw.on('close', () => { cancelled = true; releaseStream(userId); });

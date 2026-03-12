@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const FRONTEND_ORIGIN = 'https://pje-services-web-frontend.vercel.app';
+
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
 
 setInterval(() => {
@@ -31,7 +34,7 @@ export async function proxyRoutes(fastify: FastifyInstance) {
       const contentType = upstream.headers.get('content-type') || 'application/pdf';
       reply.header('Content-Type', contentType);
       reply.header('Content-Disposition', 'attachment');
-      reply.header('Access-Control-Allow-Origin', '*');
+      reply.header('Access-Control-Allow-Origin', IS_PRODUCTION ? FRONTEND_ORIGIN : '*');
       reply.header('Access-Control-Expose-Headers', 'Content-Length, Content-Disposition');
       if (contentLength) reply.header('Content-Length', contentLength);
       const nodeStream = Readable.fromWeb(upstream.body as any);
