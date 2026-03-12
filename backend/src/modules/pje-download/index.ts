@@ -1,8 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { MemoryDownloadRepository } from './repositories/download.repository.memory';
-import { PJEDownloadService } from './services/pje-download.service';
-
-import { PJEDownloadWorker } from './services/download/download.worker';
+import { PJEDownloadService } from './pje-download.service';
+import { PJEDownloadWorker } from './pje-download-worker';
 import { PjeAdvogadosService } from './services/pje-advogados/index';
 import { authRoutes } from './controllers/auth.controller';
 import { jobsRoutes } from './controllers/jobs.controller';

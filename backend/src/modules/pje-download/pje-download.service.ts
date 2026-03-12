@@ -6,9 +6,9 @@ import {
   type DownloadJobResponse,
   type PJEDownloadProgress,
   type PJEJobStatus,
-} from 'shared';
-import type { IDownloadRepository } from '../repositories/download.repository';
-import { AppError } from '../../../shared/errors';
+} from '../../shared/types';
+import type { IDownloadRepository } from './repositories/download.repository';
+import { AppError } from '../../shared/errors';
 
 export class PJEDownloadService {
   private twoFaCodes = new Map<string, { code: string; expiresAt: number }>();
@@ -124,4 +124,4 @@ export class PJEDownloadService {
   }
 }
 
-export type { IDownloadRepository as IPJEDownloadRepository } from '../repositories/download.repository';
+export type { IDownloadRepository as IPJEDownloadRepository } from './repositories/download.repository';

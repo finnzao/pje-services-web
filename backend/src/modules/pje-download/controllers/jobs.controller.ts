@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CreateDownloadJobDTO, Submit2FADTO } from '../../../shared/types';
-import { PJEDownloadService } from '../services/pje-download.service';
+import { PJEDownloadService } from '../pje-download.service';
 import { authMiddleware, getUser } from '../../../middleware/auth';
 import { ok, handleServiceError } from '../../../shared/response';
 
@@ -27,7 +27,7 @@ export function jobsRoutes(service: PJEDownloadService) {
     });
     fastify.post<{ Params: { jobId: string }; Body: Submit2FADTO }>('/:jobId/2fa', async (request, reply) => {
       const user = getUser(request);
-      try { await service.submit2FA(request.params.jobId, user.id, request.body); ok(reply, { message: 'Código 2FA recebido.' }); }
+      try { await service.submit2FA(request.params.jobId, user.id, request.body); ok(reply, { message: 'Codigo 2FA recebido.' }); }
       catch (err) { handleServiceError(err, request, reply); }
     });
     fastify.delete<{ Params: { jobId: string } }>('/:jobId', async (request, reply) => {
