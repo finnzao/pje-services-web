@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { CheckCircle, AlertCircle, Loader2, X, Download } from 'lucide-react';
 
 interface ProgressoJobProps {
@@ -8,14 +9,17 @@ interface ProgressoJobProps {
   message: string;
   processedCount: number;
   totalProcesses: number;
-  downloadUrl?: string;
+  onDownload?: () => Promise<void>;
   onCancelar?: () => void;
 }
 
 export function ProgressoJob({
   status, progress, message, processedCount, totalProcesses,
-  downloadUrl, onCancelar,
+  onDownload, onCancelar,
 }: ProgressoJobProps) {
+  const [baixando, setBaixando] = useState(false);
+  const [erroDownload, setErroDownload] = useState<string | null>(null);
+
   const isDone = ['completed', 'failed', 'cancelled'].includes(status);
 
   const borderClass =
@@ -27,6 +31,19 @@ export function ProgressoJob({
     status === 'completed' ? <CheckCircle size={16} className="text-emerald-600" /> :
     status === 'failed' ? <AlertCircle size={16} className="text-red-600" /> :
     <Loader2 size={16} className="text-blue-600 animate-spin" />;
+
+  const handleDownload = async () => {
+    if (!onDownload) return;
+    setBaixando(true);
+    setErroDownload(null);
+    try {
+      await onDownload();
+    } catch (err: any) {
+      setErroDownload(err.message || 'Erro ao baixar planilha');
+    } finally {
+      setBaixando(false);
+    }
+  };
 
   return (
     <div className={`p-4 border-2 ${borderClass}`}>
@@ -53,11 +70,22 @@ export function ProgressoJob({
         <span>{progress}%</span>
       </div>
 
-      {status === 'completed' && downloadUrl && (
-        <a href={downloadUrl} target="_blank" rel="noopener noreferrer"
-          className="mt-3 flex items-center justify-center gap-2 py-2 px-4 bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700">
-          <Download size={16} /> Baixar Planilha
-        </a>
+      {status === 'completed' && onDownload && (
+        <>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={baixando}
+            className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {baixando
+              ? <><Loader2 size={16} className="animate-spin" /> Baixando...</>
+              : <><Download size={16} /> Baixar Planilha</>}
+          </button>
+          {erroDownload && (
+            <p className="mt-2 text-xs text-red-600 text-center">{erroDownload}</p>
+          )}
+        </>
       )}
     </div>
   );

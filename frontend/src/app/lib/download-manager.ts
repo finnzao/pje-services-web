@@ -36,6 +36,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+/**
+ * Resolve uma base para construção de URLs absolutas.
+ * Se apiBase for vazio (proxy via Next.js rewrite), usa window.location.origin.
+ */
+function resolveBaseUrl(apiBase: string): string {
+  if (apiBase) return apiBase;
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
+}
+
 async function downloadWithFallback(
   directUrl: string,
   proxyUrl: string,
@@ -47,7 +57,8 @@ async function downloadWithFallback(
     if (res.ok) return await res.blob();
     throw new Error(`HTTP ${res.status}`);
   } catch {
-    const fullProxyUrl = proxyUrl.startsWith('/') ? `${apiBase}${proxyUrl}` : proxyUrl;
+    const base = resolveBaseUrl(apiBase);
+    const fullProxyUrl = proxyUrl.startsWith('/') ? `${base}${proxyUrl}` : proxyUrl;
     const res = await fetch(fullProxyUrl, { signal });
     if (!res.ok) throw new Error(`Proxy falhou: HTTP ${res.status}`);
     return await res.blob();
@@ -119,7 +130,8 @@ export class DownloadManager {
         : 'Modo ZIP — arquivo será gerado ao final';
       onProgress({ ...this.progress });
 
-      const sseUrl = new URL(`${params.apiBase}/api/pje/downloads/stream-batch`);
+      const base = resolveBaseUrl(params.apiBase);
+      const sseUrl = new URL(`${base}/api/pje/downloads/stream-batch`);
       sseUrl.searchParams.set('sessionId', params.sessionId);
       sseUrl.searchParams.set('mode', params.mode);
       if (params.taskName) sseUrl.searchParams.set('taskName', params.taskName);

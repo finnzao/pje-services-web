@@ -1,3 +1,10 @@
+/**
+ * Cliente HTTP centralizado.
+ *
+ * API_BASE, ApiError e request() ficam SOMENTE aqui.
+ * Todos os módulos que precisam fazer chamadas à API importam deste arquivo.
+ */
+
 export const API_BASE = '';
 
 export class ApiError extends Error {

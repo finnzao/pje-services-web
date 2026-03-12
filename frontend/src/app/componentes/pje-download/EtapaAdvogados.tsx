@@ -12,7 +12,7 @@ import { ListaEtiquetas } from './ListaEtiquetas';
 import { ProgressoJob } from './ProgressoJob';
 import {
   gerarPlanilhaAdvogados, obterProgressoAdvogados,
-  cancelarPlanilhaAdvogados, getDownloadUrl,
+  cancelarPlanilhaAdvogados, downloadPlanilha,
   type GerarPlanilhaParams,
 } from './api-advogados';
 
@@ -131,7 +131,7 @@ export function EtapaAdvogados({
           <ProgressoJob
             status={job.status} progress={job.progress} message={job.message}
             processedCount={job.processedCount} totalProcesses={job.totalProcesses}
-            downloadUrl={job.status === 'completed' ? getDownloadUrl(job.jobId) : undefined}
+            onDownload={job.status === 'completed' ? () => downloadPlanilha(job.jobId) : undefined}
             onCancelar={!['completed', 'failed', 'cancelled'].includes(job.status) ? handleCancelar : undefined}
           />
         </div>

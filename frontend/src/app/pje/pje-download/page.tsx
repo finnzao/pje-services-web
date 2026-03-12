@@ -28,7 +28,7 @@ import {
 } from '../../componentes/pje-download/api';
 import {
   gerarPlanilhaAdvogados, obterProgressoAdvogados,
-  cancelarPlanilhaAdvogados, getDownloadUrl,
+  cancelarPlanilhaAdvogados, downloadPlanilha,
   type GerarPlanilhaParams,
 } from '../../componentes/pje-download/api-advogados';
 
@@ -479,7 +479,7 @@ export default function PaginaDownloadPJE() {
                   message={jobAdvogados.message}
                   processedCount={jobAdvogados.processedCount}
                   totalProcesses={jobAdvogados.totalProcesses}
-                  downloadUrl={jobAdvogados.status === 'completed' ? getDownloadUrl(jobAdvogados.jobId) : undefined}
+                  onDownload={jobAdvogados.status === 'completed' ? () => downloadPlanilha(jobAdvogados.jobId) : undefined}
                   onCancelar={isAdvogadosActive ? handleCancelarAdvogados : undefined}
                 />
               </div>
