@@ -21,9 +21,10 @@ import { ListaTarefas } from '../../componentes/pje-download/ListaTarefas';
 import { ListaEtiquetas } from '../../componentes/pje-download/ListaEtiquetas';
 import { ProgressoJob } from '../../componentes/pje-download/ProgressoJob';
 
-// API e tipos
+// API centralizada
+import { API_BASE, ApiError } from '../../lib/api-client';
 import {
-  loginPJE, enviar2FA, selecionarPerfil, ApiError,
+  loginPJE, enviar2FA, selecionarPerfil,
 } from '../../componentes/pje-download/api';
 import {
   gerarPlanilhaAdvogados, obterProgressoAdvogados,
@@ -40,8 +41,6 @@ import { logger, ESTADO_EXECUCAO_INICIAL } from '../../componentes/pje-download/
 // Lib de download (mantida do projeto original)
 import { FileSystemManager } from '../../lib/filesystem-manager';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 // ── Indicador de etapas do wizard ────────────────────────
 
@@ -288,7 +287,6 @@ export default function PaginaDownloadPJE() {
     try {
       await manager.execute(params, (p) => {
         setDownloadProgress({ ...p });
-        // Atualizar variáveis amigáveis de execução
         setExecucao({
           isDownloading: !['done', 'error', 'cancelled'].includes(p.phase),
           downloadProgress: p.totalProcesses > 0
@@ -497,7 +495,6 @@ export default function PaginaDownloadPJE() {
                     onSelecionar={(s) => {
                       setServicoAtivo(s);
                       setErro(null);
-                      // Reset seleções ao trocar serviço
                       setTarefaSelecionada('');
                       setEtiquetaSelecionada(null);
                       setNumerosProcesso('');
@@ -512,7 +509,6 @@ export default function PaginaDownloadPJE() {
                       modoSelecionado={modo}
                       onSelecionar={(m) => {
                         setModo(m);
-                        // Reset seleções ao trocar modo
                         setTarefaSelecionada('');
                         setEtiquetaSelecionada(null);
                         setNumerosProcesso('');

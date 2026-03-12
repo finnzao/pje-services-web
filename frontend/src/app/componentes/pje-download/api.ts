@@ -1,38 +1,14 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-export class ApiError extends Error {
-  constructor(public status: number, message: string, public data?: unknown) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
+import { API_BASE, ApiError, request } from '../../lib/api-client';
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${path}`;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-user': JSON.stringify({ id: 1, name: 'Dr. João Magistrado', role: 'magistrado' }),
-    ...(options.headers as Record<string, string> || {}),
-  };
-
-  try {
-    const res = await fetch(url, { ...options, headers });
-    const body = await res.json().catch(() => null);
-    if (!res.ok) {
-      const errorMsg = body?.error?.message || body?.message || `HTTP ${res.status}`;
-      throw new ApiError(res.status, errorMsg, body);
-    }
-    return (body?.data ?? body) as T;
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    if (err instanceof TypeError && err.message === 'Failed to fetch')
-      throw new ApiError(0, 'Servidor indisponível. Verifique se a API está em execução.');
-    throw err;
-  }
-}
+export { API_BASE, ApiError };
 
 type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number';
-type PJEJobStatus = 'pending' | 'authenticating' | 'awaiting_2fa' | 'selecting_profile' | 'processing' | 'downloading' | 'checking_integrity' | 'retrying' | 'completed' | 'failed' | 'cancelled' | 'partial';
+type PJEJobStatus =
+  | 'pending' | 'authenticating' | 'awaiting_2fa' | 'selecting_profile'
+  | 'processing' | 'downloading' | 'checking_integrity' | 'retrying'
+  | 'completed' | 'failed' | 'cancelled' | 'partial';
 
 export async function loginPJE(params: { cpf: string; password: string }) {
   return request<{
@@ -58,7 +34,6 @@ export async function selecionarPerfil(sessionId: string, profileIndex: number) 
   }>('/api/pje/downloads/auth/profile', { method: 'POST', body: JSON.stringify({ sessionId, profileIndex }) });
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface CriarJobParams {
   mode: PJEDownloadMode;
   credentials: { cpf: string; password: string };

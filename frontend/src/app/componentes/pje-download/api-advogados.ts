@@ -1,23 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${path}`;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-user': JSON.stringify({ id: 1, name: 'Dr. João Magistrado', role: 'magistrado' }),
-    ...(options.headers as Record<string, string> || {}),
-  };
-
-  const res = await fetch(url, { ...options, headers });
-  const body = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    const msg = body?.error?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-
-  return (body?.data ?? body) as T;
-}
+import { API_BASE, request } from '../../lib/api-client';
 
 export interface GerarPlanilhaParams {
   credentials: { cpf: string; password: string };

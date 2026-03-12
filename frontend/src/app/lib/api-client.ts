@@ -1,13 +1,20 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+export const API_BASE = '';
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public data?: unknown) {
+  constructor(
+    public status: number,
+    message: string,
+    public data?: unknown,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
   const url = `${API_BASE}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -18,10 +25,12 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   try {
     const res = await fetch(url, { ...options, headers });
     const body = await res.json().catch(() => null);
+
     if (!res.ok) {
       const errorMsg = body?.error?.message || body?.message || `HTTP ${res.status}`;
       throw new ApiError(res.status, errorMsg, body);
     }
+
     return (body?.data ?? body) as T;
   } catch (err) {
     if (err instanceof ApiError) throw err;
