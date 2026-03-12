@@ -1,0 +1,17 @@
+{
+  "name": "pje-download",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PJE Download - Download de processos do PJE/TJBA",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"pnpm --filter backend dev\" \"pnpm --filter frontend dev\"",
+    "dev:api": "pnpm --filter backend dev",
+    "dev:web": "pnpm --filter frontend dev",
+    "build": "pnpm --filter backend build && pnpm --filter frontend build",
+    "start": "concurrently -n api,web \"pnpm --filter backend start\" \"pnpm --filter frontend start\""
+  },
+  "packageManager": "pnpm@10.28.2",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
