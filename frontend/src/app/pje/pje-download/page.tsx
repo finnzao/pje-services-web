@@ -3,13 +3,12 @@
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
-  ArrowLeft, LogOut, Lock, User, ClipboardList,
+  Lock, User, ClipboardList,
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X,
   Search,
 } from 'lucide-react';
 
-// Componentes do módulo PJE
 import { EtapaLogin } from '../../componentes/pje-download/EtapaLogin';
 import { EtapaPerfil } from '../../componentes/pje-download/EtapaPerfil';
 import { ServiceSelector } from '../../componentes/pje-download/ServiceSelector';
@@ -21,7 +20,6 @@ import { ListaTarefas } from '../../componentes/pje-download/ListaTarefas';
 import { ListaEtiquetas } from '../../componentes/pje-download/ListaEtiquetas';
 import { ProgressoJob } from '../../componentes/pje-download/ProgressoJob';
 
-// API centralizada
 import { API_BASE, ApiError } from '../../lib/api-client';
 import {
   loginPJE, enviar2FA, selecionarPerfil,
@@ -38,11 +36,8 @@ import type {
 } from '../../componentes/pje-download/types';
 import { logger, ESTADO_EXECUCAO_INICIAL } from '../../componentes/pje-download/types';
 
-// Lib de download (mantida do projeto original)
 import { FileSystemManager } from '../../lib/filesystem-manager';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
-
-// ── Indicador de etapas do wizard ────────────────────────
 
 const ETAPAS_WIZARD: { id: EtapaWizard; rotulo: string; icone: React.ReactNode }[] = [
   { id: 'login', rotulo: 'Login', icone: <Lock size={14} /> },
@@ -73,8 +68,6 @@ function IndicadorEtapas({ etapaAtual }: { etapaAtual: EtapaWizard }) {
     </div>
   );
 }
-
-// ── Helpers ──────────────────────────────────────────────
 
 function isSessionExpiredError(err: unknown): boolean {
   if (err instanceof ApiError) {
@@ -119,30 +112,27 @@ function useUiLogs() {
   return { logs, addLog, limpar };
 }
 
-// ── Componente principal da página ───────────────────────
-
 export default function PaginaDownloadPJE() {
-  // Estado do wizard de autenticação
+  // Autenticação
   const [etapa, setEtapa] = useState<EtapaWizard>('login');
   const [sessao, setSessao] = useState<SessaoPJE>({ autenticado: false });
   const [credenciais, setCredenciais] = useState<{ cpf: string; password: string } | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Estado da interface de download
+  // Interface de download
   const [servicoAtivo, setServicoAtivo] = useState<ServicoAtivo | null>(null);
   const [modo, setModo] = useState<PJEDownloadMode>('by_task');
   const [tarefaSelecionada, setTarefaSelecionada] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
   const [etiquetaSelecionada, setEtiquetaSelecionada] = useState<number | null>(null);
-  const [numerosProcesso, setNumerosProcesso] = useState('');
 
-  // Estado de execução — variáveis amigáveis para acompanhamento
+  // Execução de download
   const [execucao, setExecucao] = useState<EstadoExecucao>(ESTADO_EXECUCAO_INICIAL);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const managerRef = useRef<DownloadManager | null>(null);
 
-  // Estado do job de advogados
+  // Job de advogados
   const [jobAdvogados, setJobAdvogados] = useState<{
     jobId: string; status: string; progress: number;
     message: string; totalProcesses: number; processedCount: number;
@@ -153,10 +143,9 @@ export default function PaginaDownloadPJE() {
   const [tipoFiltroAdv, setTipoFiltroAdv] = useState<'nome' | 'oab'>('nome');
   const [valorFiltroAdv, setValorFiltroAdv] = useState('');
 
-  const { logs, addLog, limpar: limparLogs } = useUiLogs();
+  const { addLog } = useUiLogs();
 
   const fsApiSupported = typeof window !== 'undefined' && FileSystemManager?.isSupported?.();
-  const numerosParseados = numerosProcesso.split(/[\n,;]+/).map((n) => n.trim()).filter(Boolean);
 
   const totalProcessosTarefa = useMemo(() => {
     const lista = isFavorite ? (sessao.tarefasFavoritas || []) : (sessao.tarefas || []);
@@ -166,7 +155,7 @@ export default function PaginaDownloadPJE() {
   const isDownloadActive = downloadProgress && !['done', 'error', 'cancelled'].includes(downloadProgress.phase);
   const isAdvogadosActive = jobAdvogados && !['completed', 'failed', 'cancelled'].includes(jobAdvogados.status);
 
-  // ── Ações de autenticação ──────────────────────────────
+  // Autenticação
 
   const handleLogout = useCallback(() => {
     addLog('info', 'AUTH', 'Logout');
@@ -251,13 +240,7 @@ export default function PaginaDownloadPJE() {
     }
   }, [addLog, sessao.sessionId, handleLogout]);
 
-  const handleVoltarPerfil = useCallback(() => {
-    setEtapa('perfil');
-    setErro(null);
-    setServicoAtivo(null);
-  }, []);
-
-  // ── Ações de download de processos (stream) ────────────
+  // Download de processos (stream)
 
   const handleDownloadProcessos = useCallback(async () => {
     setErro(null);
@@ -280,8 +263,6 @@ export default function PaginaDownloadPJE() {
       params.tagId = etiquetaSelecionada!;
       const etq = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada);
       params.tagName = etq?.nomeTag;
-    } else {
-      params.processNumbers = numerosParseados;
     }
 
     try {
@@ -305,13 +286,13 @@ export default function PaginaDownloadPJE() {
       setErro(err.message || 'Erro inesperado');
       setExecucao((prev) => ({ ...prev, isDownloading: false, downloadStatus: 'failed', downloadMessage: err.message || 'Erro' }));
     }
-  }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, numerosParseados]);
+  }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao]);
 
   const handleCancelarDownload = useCallback(() => {
     managerRef.current?.cancel();
   }, []);
 
-  // ── Ações de planilha de advogados ─────────────────────
+  // Planilha de advogados
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -375,7 +356,7 @@ export default function PaginaDownloadPJE() {
     } catch { /* silent */ }
   }, [jobAdvogados, stopPolling]);
 
-  // ── Handler de submit unificado ────────────────────────
+  // Submit unificado
 
   const handleSubmit = useCallback(() => {
     if (servicoAtivo === 'processos') {
@@ -385,23 +366,16 @@ export default function PaginaDownloadPJE() {
     }
   }, [servicoAtivo, handleDownloadProcessos, handleGerarPlanilha]);
 
-  // ── Derivações ─────────────────────────────────────────
+  // Derivações
 
-  const etapaAtual: EtapaWizard = etapa === '2fa' ? 'login' : etapa;
   const mostrandoDownload = etapa === 'download' && sessao.perfilSelecionado;
-
-  // ── Render ─────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      
       <main className="flex-1 max-w-4xl mx-auto px-6 py-8 w-full">
-        {/* Título da página */}
         <div className="mb-8">
           <h2 className="text-xl font-bold text-slate-900 mb-1">Download PJE</h2>
           <p className="text-sm text-slate-500">PJE/TJBA — Baixe processos e gere planilhas</p>
-
-          {/* Perfil ativo - minimalista */}
           {sessao.perfilSelecionado && (
             <div className="mt-3">
               <ProfileBadge perfil={sessao.perfilSelecionado} />
@@ -409,7 +383,6 @@ export default function PaginaDownloadPJE() {
           )}
         </div>
 
-        {/* Etapas de autenticação */}
         {!mostrandoDownload && (
           <div>
             {(etapa === 'login' || etapa === '2fa') && (
@@ -433,10 +406,8 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
 
-        {/* Interface principal de download */}
         {mostrandoDownload && (
           <div className="max-w-3xl bg-white border-2 border-slate-200 p-6">
-            {/* Erro global */}
             {erro && (
               <div className="mb-6 p-3 bg-red-50 border-2 border-red-200 flex items-start gap-2">
                 <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
@@ -444,14 +415,12 @@ export default function PaginaDownloadPJE() {
               </div>
             )}
 
-            {/* Status de execução - processos */}
             {execucao.downloadStatus !== 'idle' && servicoAtivo === 'processos' && (
               <div className="mb-6">
                 <ExecutionStatus
                   estado={execucao}
                   onCancelar={execucao.isDownloading ? handleCancelarDownload : undefined}
                 />
-                {/* Lista de arquivos recentes */}
                 {downloadProgress && downloadProgress.files.length > 0 && (
                   <div className="mt-2 max-h-28 overflow-y-auto border border-slate-100 p-2">
                     {downloadProgress.files.slice(-6).reverse().map((f, i) => (
@@ -470,7 +439,6 @@ export default function PaginaDownloadPJE() {
               </div>
             )}
 
-            {/* Status de execução - advogados */}
             {jobAdvogados && servicoAtivo === 'advogados' && (
               <div className="mb-6">
                 <ProgressoJob
@@ -485,10 +453,8 @@ export default function PaginaDownloadPJE() {
               </div>
             )}
 
-            {/* Não mostrar formulário durante execução ativa */}
             {!isDownloadActive && !isAdvogadosActive && (
               <>
-                {/* SEÇÃO 1: Seleção de serviço */}
                 <div className="mb-8">
                   <ServiceSelector
                     servicoSelecionado={servicoAtivo}
@@ -497,12 +463,10 @@ export default function PaginaDownloadPJE() {
                       setErro(null);
                       setTarefaSelecionada('');
                       setEtiquetaSelecionada(null);
-                      setNumerosProcesso('');
                     }}
                   />
                 </div>
 
-                {/* SEÇÃO 2: Modo de download */}
                 {servicoAtivo && (
                   <div className="mb-8">
                     <DownloadModeSelector
@@ -511,18 +475,16 @@ export default function PaginaDownloadPJE() {
                         setModo(m);
                         setTarefaSelecionada('');
                         setEtiquetaSelecionada(null);
-                        setNumerosProcesso('');
                       }}
                       desabilitado={!servicoAtivo}
                     />
                   </div>
                 )}
 
-                {/* SEÇÃO 3: Seleção de tarefa/etiqueta/número */}
                 {servicoAtivo && (
                   <div className="mb-4">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
-                      3. {modo === 'by_task' ? 'Selecione a tarefa' : modo === 'by_tag' ? 'Selecione a etiqueta' : 'Informe os números'}
+                      3. {modo === 'by_task' ? 'Selecione a tarefa' : 'Selecione a etiqueta'}
                     </label>
 
                     {modo === 'by_task' && (
@@ -554,27 +516,10 @@ export default function PaginaDownloadPJE() {
                         onSelecionar={setEtiquetaSelecionada}
                       />
                     )}
-
-                    {modo === 'by_number' && (
-                      <div>
-                        <textarea
-                          value={numerosProcesso}
-                          onChange={(e) => setNumerosProcesso(e.target.value)}
-                          placeholder={'Cole os números aqui, um por linha.\nFormato: NNNNNNN-DD.AAAA.J.TT.OOOO'}
-                          rows={6}
-                          className="w-full p-3 border-2 border-slate-200 text-sm font-mono focus:border-slate-400 focus:outline-none resize-none"
-                        />
-                        <div className="flex justify-between mt-2">
-                          <p className="text-xs text-slate-400">Separe por linha, vírgula ou ponto e vírgula.</p>
-                          <p className="text-xs text-slate-500 font-bold">{numerosParseados.length} processo(s)</p>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
-                {/* Filtro de advogados (apenas para serviço advogados) */}
-                {servicoAtivo === 'advogados' && modo !== 'by_number' && (
+                {servicoAtivo === 'advogados' && (
                   <div className="mb-4 p-4 bg-amber-50 border border-amber-200">
                     <div className="flex items-center gap-2 mb-3">
                       <Search size={14} className="text-amber-700" />
@@ -595,13 +540,12 @@ export default function PaginaDownloadPJE() {
                       placeholder={tipoFiltroAdv === 'nome' ? 'Ex: Felipe, Paulo...' : 'Ex: BA33407, SE6662...'}
                       className="w-full px-3 py-2 border border-amber-200 text-sm focus:border-amber-400 focus:outline-none bg-white"
                     />
-                    <p className="text-xs text-amber-600 mt-1">
-                      {!valorFiltroAdv.trim() ? 'Deixe vazio para incluir todos os advogados.' : ''}
-                    </p>
+                    {!valorFiltroAdv.trim() && (
+                      <p className="text-xs text-amber-600 mt-1">Deixe vazio para incluir todos os advogados.</p>
+                    )}
                   </div>
                 )}
 
-                {/* Info sobre modo de salvamento (compacto) */}
                 {servicoAtivo === 'processos' && (
                   <div className="mb-2 px-3 py-2 bg-slate-50 border border-slate-200 flex items-center gap-2 text-xs text-slate-500">
                     {fsApiSupported
@@ -612,14 +556,13 @@ export default function PaginaDownloadPJE() {
               </>
             )}
 
-            {/* SEÇÃO 4: Botão de ação principal */}
             {!isDownloadActive && !isAdvogadosActive && (
               <DownloadAction
                 servico={servicoAtivo}
                 modo={modo}
                 tarefaSelecionada={tarefaSelecionada}
                 etiquetaSelecionada={etiquetaSelecionada}
-                numerosProcesso={numerosParseados}
+                numerosProcesso={[]}
                 carregando={carregando}
                 fsApiSupported={fsApiSupported}
                 totalProcessos={totalProcessosTarefa}
@@ -629,7 +572,6 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
       </main>
-
     </div>
   );
 }
