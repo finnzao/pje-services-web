@@ -1,11 +1,7 @@
 import { PJEAuthProxy, sessionStore } from '../auth/pje-auth-proxy.service';
-import { PJEDownloadService } from '../pje-download.service';
+import { PJEDownloadService } from '../../pje-download.service';
 import type { IDownloadRepository } from '../../repositories/download.repository';
-import type {
-  PJEJobStatus, PJEDownloadProgress,
-  PJEDownloadedFile, PJEDownloadError as PJEDownloadErrorType,
-  DownloadJobResponse,
-} from 'shared';
+import type { PJEJobStatus, PJEDownloadProgress, PJEDownloadedFile, PJEDownloadError as PJEDownloadErrorType, DownloadJobResponse } from '../../../../shared/types';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
