@@ -7,7 +7,7 @@ import { errorHandler } from './middleware/error-handler';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const PORT = parseInt(process.env.PORT || '3001', 10);
+const PORT = parseInt(process.env.PORT || '10000', 10);
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const ALLOWED_ORIGINS: (string | RegExp)[] = IS_PRODUCTION
@@ -20,26 +20,29 @@ const ALLOWED_ORIGINS: (string | RegExp)[] = IS_PRODUCTION
 async function main() {
   const fastify = Fastify({
     logger: {
-      level: IS_PRODUCTION ? 'warn' : (process.env.LOG_LEVEL || 'info'),
+      level: IS_PRODUCTION ? 'info' : (process.env.LOG_LEVEL || 'info'),
       transport: !IS_PRODUCTION
         ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } }
         : undefined,
     },
   });
 
-  // Security headers
-  await fastify.register(helmet, { contentSecurityPolicy: false });
-
-  // Rate limiting
-  await fastify.register(rateLimit, { max: 100, timeWindow: '1 minute' });
-
-  // CORS
+  // CORS — DEVE vir ANTES do helmet
   await fastify.register(cors, {
     origin: IS_PRODUCTION ? ALLOWED_ORIGINS : true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-user', 'X-User'],
     credentials: true,
   });
+
+  // Security headers — DEPOIS do CORS
+  await fastify.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: false,
+  });
+
+  // Rate limiting
+  await fastify.register(rateLimit, { max: 100, timeWindow: '1 minute' });
 
   fastify.setErrorHandler(errorHandler);
 
