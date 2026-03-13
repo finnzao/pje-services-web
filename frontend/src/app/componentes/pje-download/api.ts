@@ -4,7 +4,7 @@ import { API_BASE, ApiError, request } from '../../lib/api-client';
 
 export { API_BASE, ApiError };
 
-type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number';
+type PJEDownloadMode = 'by_task' | 'by_tag' ;
 type PJEJobStatus =
   | 'pending' | 'authenticating' | 'awaiting_2fa' | 'selecting_profile'
   | 'processing' | 'downloading' | 'checking_integrity' | 'retrying'
