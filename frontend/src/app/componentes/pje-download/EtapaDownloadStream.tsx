@@ -25,7 +25,6 @@ interface EtapaDownloadStreamProps {
 const MODOS: Array<{ id: PJEDownloadMode; icone: React.ReactNode; rotulo: string; desc: string }> = [
   { id: 'by_task',   icone: <ClipboardList size={16} />, rotulo: 'Por Tarefa',   desc: 'Baixar processos de uma tarefa' },
   { id: 'by_tag',    icone: <Tag size={16} />,           rotulo: 'Por Etiqueta', desc: 'Baixar por etiqueta/marcador' },
-  { id: 'by_number', icone: <Hash size={16} />,          rotulo: 'Por Número',   desc: 'Informar números CNJ' },
 ];
 
 function formatBytes(bytes: number): string {
@@ -253,19 +252,6 @@ export function EtapaDownloadStream({
 
           {modo === 'by_tag' && (
             <ListaEtiquetas etiquetas={etiquetas} selecionada={etiquetaSelecionada} onSelecionar={setEtiquetaSelecionada} />
-          )}
-
-          {modo === 'by_number' && (
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">Números de Processo (CNJ)</label>
-              <textarea value={numerosProcesso} onChange={(e) => setNumerosProcesso(e.target.value)}
-                placeholder={'Cole os números aqui, um por linha.\nFormato: NNNNNNN-DD.AAAA.J.TT.OOOO'}
-                rows={8} className="w-full p-3 border-2 border-slate-200 text-sm font-mono focus:border-slate-400 focus:outline-none resize-none" />
-              <div className="flex justify-between mt-2">
-                <p className="text-xs text-slate-400">Separe por linha, vírgula ou ponto e vírgula.</p>
-                <p className="text-xs text-slate-500 font-bold">{numerosParseados.length} processo(s)</p>
-              </div>
-            </div>
           )}
 
           <div className="mt-6">

@@ -14,7 +14,6 @@ interface ModoItem {
 const MODOS: ModoItem[] = [
   { id: 'by_task',   icone: <ClipboardList size={16} />, rotulo: 'Por Tarefa',   descricao: 'Baixar processos de uma tarefa' },
   { id: 'by_tag',    icone: <Tag size={16} />,           rotulo: 'Por Etiqueta', descricao: 'Baixar por etiqueta/marcador' },
-  { id: 'by_number', icone: <Hash size={16} />,          rotulo: 'Por Número',   descricao: 'Informar números CNJ' },
 ];
 
 interface DownloadModeSelectorProps {

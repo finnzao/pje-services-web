@@ -10,6 +10,7 @@ export { DownloadModeSelector } from './DownloadModeSelector';
 export { DownloadAction } from './DownloadAction';
 export { ExecutionStatus } from './ExecutionStatus';
 export { ProfileBadge } from './ProfileBadge';
+export { ResultadoFinal } from './ResultadoFinal';
 
 // Componentes de lista
 export { ListaTarefas } from './ListaTarefas';

@@ -33,9 +33,7 @@ function validarFluxo(
   if (modo === 'by_tag' && !etiquetaSelecionada) {
     return { valido: false, mensagem: 'Selecione uma etiqueta para continuar' };
   }
-  if (modo === 'by_number' && numerosProcesso.length === 0) {
-    return { valido: false, mensagem: 'Informe pelo menos um número de processo' };
-  }
+
   return { valido: true, mensagem: '' };
 }
 
@@ -69,9 +67,6 @@ export function DownloadAction({
     }
     if (modo === 'by_tag' && etiquetaSelecionada) {
       return 'Baixar processos da etiqueta';
-    }
-    if (modo === 'by_number') {
-      return `Baixar ${numerosProcesso.length} processo(s)`;
     }
     return fsApiSupported ? 'Escolher pasta e baixar' : 'Baixar como ZIP';
   };
