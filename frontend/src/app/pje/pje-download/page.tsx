@@ -6,7 +6,7 @@ import {
   Lock, User, ClipboardList,
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
-  Search,
+  Search, UserCog,
 } from 'lucide-react';
 
 import { EtapaLogin } from '../../componentes/pje-download/EtapaLogin';
@@ -155,10 +155,28 @@ export default function PaginaDownloadPJE() {
 
   const isDownloadActive = downloadProgress && !['done', 'error', 'cancelled'].includes(downloadProgress.phase);
   const isAdvogadosActive = jobAdvogados && !['completed', 'failed', 'cancelled'].includes(jobAdvogados.status);
+  const isAnyTaskActive = !!(isDownloadActive || isAdvogadosActive);
+
+  // ── Limpar polling e downloads em andamento ────────────
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const cancelActiveOperations = useCallback(() => {
+    // Cancelar download em andamento
+    if (managerRef.current) {
+      managerRef.current.cancel();
+      managerRef.current = null;
+    }
+    // Parar polling de advogados
+    stopPolling();
+  }, [stopPolling]);
 
   // ── Resetar estado do formulário de download ───────────
 
   const resetarFormulario = useCallback(() => {
+    cancelActiveOperations();
     setServicoAtivo(null);
     setModo('by_task');
     setTarefaSelecionada('');
@@ -171,7 +189,7 @@ export default function PaginaDownloadPJE() {
     setErro(null);
     setTipoFiltroAdv('nome');
     setValorFiltroAdv('');
-  }, []);
+  }, [cancelActiveOperations]);
 
   // ── Ações pós-resultado ────────────────────────────────
 
@@ -194,12 +212,18 @@ export default function PaginaDownloadPJE() {
   // ── Autenticação ───────────────────────────────────────
 
   const handleLogout = useCallback(() => {
-    addLog('info', 'AUTH', 'Logout');
+    addLog('info', 'AUTH', 'Logout — limpando toda a sessão');
+
+    // Cancelar operações em andamento
+    cancelActiveOperations();
+
+    // Limpar todo o estado
     resetarFormulario();
     setSessao({ autenticado: false });
     setCredenciais(null);
+    setCarregando(false);
     setEtapa('login');
-  }, [addLog, resetarFormulario]);
+  }, [addLog, cancelActiveOperations, resetarFormulario]);
 
   const handleLogin = useCallback(async (cpf: string, senha: string) => {
     setCarregando(true);
@@ -364,10 +388,6 @@ export default function PaginaDownloadPJE() {
 
   // ── Planilha de advogados ──────────────────────────────
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
-
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
@@ -486,16 +506,31 @@ export default function PaginaDownloadPJE() {
             )}
           </div>
 
-          {/* Botão de logout — visível quando autenticado */}
+          {/* Botões de ação do header — visíveis quando autenticado */}
           {sessao.autenticado && (
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition-colors"
-            >
-              <LogOut size={14} />
-              Sair
-            </button>
+            <div className="flex items-center gap-2">
+              {/* Botão Mudar Perfil — visível quando perfil está selecionado e não há tarefa ativa */}
+              {sessao.perfilSelecionado && !isAnyTaskActive && (
+                <button
+                  type="button"
+                  onClick={handleMudarPerfil}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 transition-colors"
+                >
+                  <UserCog size={14} />
+                  Mudar Perfil
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={isAnyTaskActive}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-500 disabled:hover:bg-transparent disabled:hover:border-slate-200"
+                title={isAnyTaskActive ? 'Aguarde a conclusão da tarefa em andamento' : 'Sair do PJE'}
+              >
+                <LogOut size={14} />
+                Sair
+              </button>
+            </div>
           )}
         </div>
 
@@ -702,6 +737,7 @@ export default function PaginaDownloadPJE() {
                       modo={modo}
                       tarefaSelecionada={tarefaSelecionada}
                       etiquetaSelecionada={etiquetaSelecionada}
+                      numerosProcesso={[]}
                       carregando={carregando}
                       fsApiSupported={fsApiSupported}
                       totalProcessos={totalProcessosTarefa}
