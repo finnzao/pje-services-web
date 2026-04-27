@@ -3,7 +3,6 @@
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
-  Lock, User, ClipboardList,
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
   UserCog,
