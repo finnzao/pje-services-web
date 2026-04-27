@@ -1,4 +1,5 @@
 import { API_BASE, request } from '../../lib/api-client';
+import type { FiltroAdvogado } from './types';
 
 export interface GerarPlanilhaParams {
   credentials: { cpf: string; password: string };
@@ -9,7 +10,7 @@ export interface GerarPlanilhaParams {
   tagName?: string;
   pjeProfileIndex?: number;
   pjeSessionId?: string;
-  filtro?: { tipo: 'nome' | 'oab'; valor: string };
+  filtros?: FiltroAdvogado[];
 }
 
 export async function gerarPlanilhaAdvogados(params: GerarPlanilhaParams) {
@@ -32,8 +33,7 @@ export async function cancelarPlanilhaAdvogados(jobId: string) {
 }
 
 /**
- * Baixa a planilha via fetch (com header x-user) e dispara o download no browser.
- * Necessário porque links <a href> não enviam headers customizados.
+ * Baixa a planilha via fetch (com header x-user) e dispara o download.
  */
 export async function downloadPlanilha(jobId: string): Promise<void> {
   const url = `${API_BASE}/api/pje/advogados/${jobId}/download`;

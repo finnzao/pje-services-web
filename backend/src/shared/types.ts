@@ -51,14 +51,16 @@ export interface ProcessoAdvogados {
   erro?: string;
 }
 
+export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
+
 export interface GerarPlanilhaAdvogadosDTO {
   credentials: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag'; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string; pjeProfileIndex?: number; pjeSessionId?: string;
+  // Compatibilidade: aceita tanto filtro único (legado) quanto array (novo)
   filtro?: FiltroAdvogado;
+  filtros?: FiltroAdvogado[];
 }
-
-export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
 
 export interface PlanilhaAdvogadosProgress {
   jobId: string; status: 'listing' | 'extracting' | 'generating' | 'completed' | 'failed' | 'cancelled';

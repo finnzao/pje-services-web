@@ -39,6 +39,8 @@ export interface DownloadJobResponse { id: string; userId: number; mode: PJEDown
 export interface PJEDownloadProgress { jobId: string; status: PJEJobStatus; progress: number; totalProcesses: number; successCount: number; failureCount: number; currentProcess?: string; files: PJEDownloadedFile[]; errors: PJEDownloadError[]; message: string; timestamp: number; }
 export interface EntradaLog { id: number; timestamp: string; nivel: 'info' | 'warn' | 'error' | 'success'; modulo: string; mensagem: string; dados?: unknown; }
 
+export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
+
 interface StatusConfig { label: string; color: string; bg: string }
 
 export const STATUS_CONFIG: Record<PJEJobStatus, StatusConfig> = {

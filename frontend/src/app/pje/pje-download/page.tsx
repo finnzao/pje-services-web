@@ -6,7 +6,7 @@ import {
   Lock, User, ClipboardList,
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
-  Search, UserCog,
+  UserCog,
 } from 'lucide-react';
 
 import { EtapaLogin } from '../../componentes/pje-download/EtapaLogin';
@@ -20,6 +20,7 @@ import { ListaTarefas } from '../../componentes/pje-download/ListaTarefas';
 import { ListaEtiquetas } from '../../componentes/pje-download/ListaEtiquetas';
 import { ProgressoJob } from '../../componentes/pje-download/ProgressoJob';
 import { ResultadoFinal } from '../../componentes/pje-download/ResultadoFinal';
+import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogados';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
 import {
@@ -34,13 +35,12 @@ import {
 import type {
   EtapaWizard, SessaoPJE, PerfilPJE, EntradaLog,
   PJEDownloadMode, ServicoAtivo, EstadoExecucao,
+  FiltroAdvogado,
 } from '../../componentes/pje-download/types';
 import { logger, ESTADO_EXECUCAO_INICIAL } from '../../componentes/pje-download/types';
 
 import { FileSystemManager } from '../../lib/filesystem-manager';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
-
-// ── Helpers ──────────────────────────────────────────────
 
 function isSessionExpiredError(err: unknown): boolean {
   if (err instanceof ApiError) {
@@ -68,16 +68,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ── Indicador de etapas ──────────────────────────────────
-
-const ETAPAS_WIZARD: { id: EtapaWizard; rotulo: string; icone: React.ReactNode }[] = [
-  { id: 'login', rotulo: 'Login', icone: <Lock size={14} /> },
-  { id: 'perfil', rotulo: 'Perfil', icone: <User size={14} /> },
-  { id: 'download', rotulo: 'Download', icone: <ClipboardList size={14} /> },
-];
-
-// ── Logs ─────────────────────────────────────────────────
-
 let logIdCounter = 0;
 
 function useUiLogs() {
@@ -94,54 +84,40 @@ function useUiLogs() {
   return { addLog };
 }
 
-// ── Tipo do resultado final ──────────────────────────────
-
 interface ResultadoFinalState {
   status: 'success' | 'partial' | 'failed' | 'cancelled';
   titulo: string;
   mensagem: string;
   resumo?: { total: number; sucesso: number; falhas: number; bytesTotal?: number };
   tipoServico: 'processos' | 'advogados';
-  /** jobId para download de planilha (advogados) */
   advogadosJobId?: string;
 }
 
-// ══════════════════════════════════════════════════════════
-// COMPONENTE PRINCIPAL
-// ══════════════════════════════════════════════════════════
-
 export default function PaginaDownloadPJE() {
-  // ── Autenticação ───────────────────────────────────────
   const [etapa, setEtapa] = useState<EtapaWizard>('login');
   const [sessao, setSessao] = useState<SessaoPJE>({ autenticado: false });
   const [credenciais, setCredenciais] = useState<{ cpf: string; password: string } | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  // ── Interface de download ──────────────────────────────
   const [servicoAtivo, setServicoAtivo] = useState<ServicoAtivo | null>(null);
   const [modo, setModo] = useState<PJEDownloadMode>('by_task');
   const [tarefaSelecionada, setTarefaSelecionada] = useState('');
   const [isFavorite, setIsFavorite] = useState(false);
   const [etiquetaSelecionada, setEtiquetaSelecionada] = useState<number | null>(null);
 
-  // ── Execução de download ───────────────────────────────
   const [execucao, setExecucao] = useState<EstadoExecucao>(ESTADO_EXECUCAO_INICIAL);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const managerRef = useRef<DownloadManager | null>(null);
 
-  // ── Job de advogados ───────────────────────────────────
   const [jobAdvogados, setJobAdvogados] = useState<{
     jobId: string; status: string; progress: number;
     message: string; totalProcesses: number; processedCount: number;
   } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Filtro de advogados ────────────────────────────────
-  const [tipoFiltroAdv, setTipoFiltroAdv] = useState<'nome' | 'oab'>('nome');
-  const [valorFiltroAdv, setValorFiltroAdv] = useState('');
+  const [filtrosAdv, setFiltrosAdv] = useState<FiltroAdvogado[]>([]);
 
-  // ── Resultado final (tela pós-conclusão) ───────────────
   const [resultado, setResultado] = useState<ResultadoFinalState | null>(null);
 
   const { addLog } = useUiLogs();
@@ -157,23 +133,17 @@ export default function PaginaDownloadPJE() {
   const isAdvogadosActive = jobAdvogados && !['completed', 'failed', 'cancelled'].includes(jobAdvogados.status);
   const isAnyTaskActive = !!(isDownloadActive || isAdvogadosActive);
 
-  // ── Limpar polling e downloads em andamento ────────────
-
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
   const cancelActiveOperations = useCallback(() => {
-    // Cancelar download em andamento
     if (managerRef.current) {
       managerRef.current.cancel();
       managerRef.current = null;
     }
-    // Parar polling de advogados
     stopPolling();
   }, [stopPolling]);
-
-  // ── Resetar estado do formulário de download ───────────
 
   const resetarFormulario = useCallback(() => {
     cancelActiveOperations();
@@ -187,11 +157,8 @@ export default function PaginaDownloadPJE() {
     setJobAdvogados(null);
     setResultado(null);
     setErro(null);
-    setTipoFiltroAdv('nome');
-    setValorFiltroAdv('');
+    setFiltrosAdv([]);
   }, [cancelActiveOperations]);
-
-  // ── Ações pós-resultado ────────────────────────────────
 
   const handleNovaTarefa = useCallback(() => {
     resetarFormulario();
@@ -209,15 +176,9 @@ export default function PaginaDownloadPJE() {
     setEtapa('perfil');
   }, [resetarFormulario]);
 
-  // ── Autenticação ───────────────────────────────────────
-
   const handleLogout = useCallback(() => {
     addLog('info', 'AUTH', 'Logout — limpando toda a sessão');
-
-    // Cancelar operações em andamento
     cancelActiveOperations();
-
-    // Limpar todo o estado
     resetarFormulario();
     setSessao({ autenticado: false });
     setCredenciais(null);
@@ -299,8 +260,6 @@ export default function PaginaDownloadPJE() {
     }
   }, [addLog, sessao.sessionId, handleLogout]);
 
-  // ── Download de processos (stream) ─────────────────────
-
   const handleDownloadProcessos = useCallback(async () => {
     setErro(null);
     setDownloadProgress(null);
@@ -350,7 +309,6 @@ export default function PaginaDownloadPJE() {
       setExecucao((prev) => ({ ...prev, isDownloading: false, downloadStatus: 'failed', downloadMessage: err.message || 'Erro' }));
     }
 
-    // Montar resultado final
     if (finalProgress) {
       const fp = finalProgress as DownloadProgress;
       const statusMap: Record<string, ResultadoFinalState['status']> = {
@@ -386,8 +344,6 @@ export default function PaginaDownloadPJE() {
     managerRef.current?.cancel();
   }, []);
 
-  // ── Planilha de advogados ──────────────────────────────
-
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
@@ -398,7 +354,6 @@ export default function PaginaDownloadPJE() {
           stopPolling();
           setCarregando(false);
 
-          // Montar resultado final para advogados
           const statusMap: Record<string, ResultadoFinalState['status']> = {
             completed: 'success',
             failed: 'failed',
@@ -418,7 +373,7 @@ export default function PaginaDownloadPJE() {
           });
         }
       } catch { /* silent */ }
-    }, 3000);
+    }, 2500);
   }, [stopPolling]);
 
   const handleGerarPlanilha = useCallback(async () => {
@@ -442,8 +397,8 @@ export default function PaginaDownloadPJE() {
       params.tagName = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada)?.nomeTag;
     }
 
-    if (valorFiltroAdv.trim()) {
-      params.filtro = { tipo: tipoFiltroAdv, valor: valorFiltroAdv.trim() };
+    if (filtrosAdv.length > 0) {
+      params.filtros = filtrosAdv;
     }
 
     try {
@@ -454,7 +409,7 @@ export default function PaginaDownloadPJE() {
       setErro(err.message || 'Erro ao iniciar geração');
       setCarregando(false);
     }
-  }, [credenciais, modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, tipoFiltroAdv, valorFiltroAdv, startPolling]);
+  }, [credenciais, modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, filtrosAdv, startPolling]);
 
   const handleCancelarAdvogados = useCallback(async () => {
     if (!jobAdvogados) return;
@@ -472,8 +427,6 @@ export default function PaginaDownloadPJE() {
     } catch { /* silent */ }
   }, [jobAdvogados, stopPolling]);
 
-  // ── Submit unificado ───────────────────────────────────
-
   const handleSubmit = useCallback(() => {
     if (servicoAtivo === 'processos') {
       handleDownloadProcessos();
@@ -482,19 +435,12 @@ export default function PaginaDownloadPJE() {
     }
   }, [servicoAtivo, handleDownloadProcessos, handleGerarPlanilha]);
 
-  // ── Derivações ─────────────────────────────────────────
-
   const mostrandoDownload = etapa === 'download' && sessao.perfilSelecionado;
   const mostrandoResultado = resultado !== null;
-
-  // ══════════════════════════════════════════════════════════
-  // RENDER
-  // ══════════════════════════════════════════════════════════
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <main className="flex-1 max-w-4xl mx-auto px-6 py-8 w-full">
-        {/* Cabeçalho */}
         <div className="mb-8 flex items-start justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-900 mb-1">Download PJE</h2>
@@ -506,10 +452,8 @@ export default function PaginaDownloadPJE() {
             )}
           </div>
 
-          {/* Botões de ação do header — visíveis quando autenticado */}
           {sessao.autenticado && (
             <div className="flex items-center gap-2">
-              {/* Botão Mudar Perfil — visível quando perfil está selecionado e não há tarefa ativa */}
               {sessao.perfilSelecionado && !isAnyTaskActive && (
                 <button
                   type="button"
@@ -534,7 +478,6 @@ export default function PaginaDownloadPJE() {
           )}
         </div>
 
-        {/* Etapas de login / perfil */}
         {!mostrandoDownload && (
           <div>
             {(etapa === 'login' || etapa === '2fa') && (
@@ -558,11 +501,9 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
 
-        {/* Área de download / resultado */}
         {mostrandoDownload && (
           <div className="max-w-3xl bg-white border-2 border-slate-200 p-6">
 
-            {/* ═══ TELA DE RESULTADO FINAL ═══ */}
             {mostrandoResultado && (
               <ResultadoFinal
                 status={resultado.status}
@@ -581,7 +522,6 @@ export default function PaginaDownloadPJE() {
               />
             )}
 
-            {/* ═══ TELA DE PROGRESSO (em andamento) ═══ */}
             {!mostrandoResultado && (
               <>
                 {erro && (
@@ -591,7 +531,6 @@ export default function PaginaDownloadPJE() {
                   </div>
                 )}
 
-                {/* Progresso download de processos */}
                 {execucao.downloadStatus !== 'idle' && servicoAtivo === 'processos' && (
                   <div className="mb-6">
                     <ExecutionStatus
@@ -616,7 +555,6 @@ export default function PaginaDownloadPJE() {
                   </div>
                 )}
 
-                {/* Progresso advogados */}
                 {jobAdvogados && servicoAtivo === 'advogados' && (
                   <div className="mb-6">
                     <ProgressoJob
@@ -630,7 +568,6 @@ export default function PaginaDownloadPJE() {
                   </div>
                 )}
 
-                {/* Formulário de configuração */}
                 {!isDownloadActive && !isAdvogadosActive && (
                   <>
                     <div className="mb-8">
@@ -641,6 +578,7 @@ export default function PaginaDownloadPJE() {
                           setErro(null);
                           setTarefaSelecionada('');
                           setEtiquetaSelecionada(null);
+                          setFiltrosAdv([]);
                         }}
                       />
                     </div>
@@ -698,29 +636,8 @@ export default function PaginaDownloadPJE() {
                     )}
 
                     {servicoAtivo === 'advogados' && (
-                      <div className="mb-4 p-4 bg-amber-50 border border-amber-200">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Search size={14} className="text-amber-700" />
-                          <span className="text-xs font-bold text-amber-800 uppercase tracking-wide">Filtrar por Advogado (opcional)</span>
-                        </div>
-                        <div className="flex items-center gap-2 mb-2">
-                          {(['nome', 'oab'] as const).map((t) => (
-                            <button key={t} type="button" onClick={() => setTipoFiltroAdv(t)}
-                              className={`px-3 py-1.5 text-xs font-bold transition-colors ${tipoFiltroAdv === t ? 'bg-amber-700 text-white' : 'bg-white border border-amber-300 text-amber-700'}`}>
-                              {t === 'nome' ? 'Nome' : 'OAB'}
-                            </button>
-                          ))}
-                        </div>
-                        <input
-                          type="text"
-                          value={valorFiltroAdv}
-                          onChange={(e) => setValorFiltroAdv(e.target.value)}
-                          placeholder={tipoFiltroAdv === 'nome' ? 'Ex: Felipe, Paulo...' : 'Ex: BA33407, SE6662...'}
-                          className="w-full px-3 py-2 border border-amber-200 text-sm focus:border-amber-400 focus:outline-none bg-white"
-                        />
-                        {!valorFiltroAdv.trim() && (
-                          <p className="text-xs text-amber-600 mt-1">Deixe vazio para incluir todos os advogados.</p>
-                        )}
+                      <div className="mb-4">
+                        <FiltrosAdvogados filtros={filtrosAdv} onChange={setFiltrosAdv} />
                       </div>
                     )}
 
@@ -753,8 +670,6 @@ export default function PaginaDownloadPJE() {
     </div>
   );
 }
-
-// ── Sub-componente: botão de download de planilha ────────
 
 function BotaoDownloadPlanilha({ jobId }: { jobId: string }) {
   const [baixando, setBaixando] = useState(false);

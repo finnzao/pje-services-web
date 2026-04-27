@@ -14,17 +14,48 @@ export function advogadosRoutes(service: PjeAdvogadosService) {
     fastify.post<{ Body: GerarPlanilhaAdvogadosDTO }>('/gerar', async (request, reply) => {
       const user = getUser(request);
       const dto = request.body;
-      if (!dto?.credentials?.cpf || !dto?.credentials?.password)
-        return reply.status(400).send({ success: false, error: { code: 'MISSING_CREDENTIALS', message: 'CPF e senha sao obrigatorios.', statusCode: 400 } });
-      if (!dto.fonte || !['by_task', 'by_tag'].includes(dto.fonte))
-        return reply.status(400).send({ success: false, error: { code: 'INVALID_FONTE', message: 'Fonte deve ser by_task ou by_tag.', statusCode: 400 } });
-      if (dto.fonte === 'by_task' && !dto.taskName?.trim())
-        return reply.status(400).send({ success: false, error: { code: 'MISSING_TASK', message: 'Nome da tarefa e obrigatorio.', statusCode: 400 } });
-      if (dto.fonte === 'by_tag' && !dto.tagId)
-        return reply.status(400).send({ success: false, error: { code: 'MISSING_TAG', message: 'ID da etiqueta e obrigatorio.', statusCode: 400 } });
+
+      if (!dto?.credentials?.cpf || !dto?.credentials?.password) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'MISSING_CREDENTIALS', message: 'CPF e senha sao obrigatorios.', statusCode: 400 },
+        });
+      }
+      if (!dto.fonte || !['by_task', 'by_tag'].includes(dto.fonte)) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_FONTE', message: 'Fonte deve ser by_task ou by_tag.', statusCode: 400 },
+        });
+      }
+      if (dto.fonte === 'by_task' && !dto.taskName?.trim()) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'MISSING_TASK', message: 'Nome da tarefa e obrigatorio.', statusCode: 400 },
+        });
+      }
+      if (dto.fonte === 'by_tag' && !dto.tagId) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'MISSING_TAG', message: 'ID da etiqueta e obrigatorio.', statusCode: 400 },
+        });
+      }
+
+      // Valida filtros se presentes
+      if (Array.isArray(dto.filtros)) {
+        for (const f of dto.filtros) {
+          if (!f || !['nome', 'oab'].includes(f.tipo) || !f.valor?.trim()) {
+            return reply.status(400).send({
+              success: false,
+              error: { code: 'INVALID_FILTER', message: 'Filtro invalido (precisa tipo nome|oab e valor).', statusCode: 400 },
+            });
+          }
+        }
+      }
 
       const jobId = randomUUID();
-      service.gerar(jobId, user.id, dto).catch((err) => { request.log.error({ err }, `[ADVOGADOS] Erro no job ${jobId.slice(0, 8)}`); });
+      service.gerar(jobId, user.id, dto).catch((err) => {
+        request.log.error({ err }, `[ADVOGADOS] Erro no job ${jobId.slice(0, 8)}`);
+      });
       ok(reply, { jobId, message: 'Geracao de planilha iniciada.' }, 202);
     });
 
@@ -40,18 +71,34 @@ export function advogadosRoutes(service: PjeAdvogadosService) {
 
     fastify.get<{ Params: { jobId: string } }>('/:jobId/download', async (request, reply) => {
       const progress = service.getProgress(request.params.jobId);
-      if (!progress || progress.status !== 'completed')
-        return reply.status(404).send({ success: false, error: { code: 'NOT_READY', message: 'Planilha ainda nao esta pronta.', statusCode: 404 } });
+      if (!progress || progress.status !== 'completed') {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'NOT_READY', message: 'Planilha ainda nao esta pronta.', statusCode: 404 },
+        });
+      }
       const downloadsDir = path.join(process.cwd(), 'downloads', 'planilhas');
-      if (!fs.existsSync(downloadsDir))
-        return reply.status(404).send({ success: false, error: { code: 'FILE_NOT_FOUND', message: 'Diretorio nao encontrado.', statusCode: 404 } });
+      if (!fs.existsSync(downloadsDir)) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'FILE_NOT_FOUND', message: 'Diretorio nao encontrado.', statusCode: 404 },
+        });
+      }
       const filesList = fs.readdirSync(downloadsDir).filter((f) => f.endsWith('.xlsx') || f.endsWith('.csv'));
-      const sorted = filesList.sort((a, b) => fs.statSync(path.join(downloadsDir, b)).mtimeMs - fs.statSync(path.join(downloadsDir, a)).mtimeMs);
-      if (sorted.length === 0)
-        return reply.status(404).send({ success: false, error: { code: 'FILE_NOT_FOUND', message: 'Arquivo nao encontrado.', statusCode: 404 } });
+      const sorted = filesList.sort(
+        (a, b) => fs.statSync(path.join(downloadsDir, b)).mtimeMs - fs.statSync(path.join(downloadsDir, a)).mtimeMs,
+      );
+      if (sorted.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'FILE_NOT_FOUND', message: 'Arquivo nao encontrado.', statusCode: 404 },
+        });
+      }
       const fileName = sorted[0];
       const filePath = path.join(downloadsDir, fileName);
-      const contentType = fileName.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8';
+      const contentType = fileName.endsWith('.xlsx')
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'text/csv; charset=utf-8';
       reply.header('Content-Type', contentType);
       reply.header('Content-Disposition', `attachment; filename="${fileName}"`);
       return reply.send(fs.createReadStream(filePath));
