@@ -14,22 +14,36 @@ interface ModoItem {
 const MODOS: ModoItem[] = [
   { id: 'by_task',   icone: <ClipboardList size={16} />, rotulo: 'Por Tarefa',   descricao: 'Baixar processos de uma tarefa' },
   { id: 'by_tag',    icone: <Tag size={16} />,           rotulo: 'Por Etiqueta', descricao: 'Baixar por etiqueta/marcador' },
+  { id: 'by_number', icone: <Hash size={16} />,          rotulo: 'Por Lista',    descricao: 'Colar uma lista de números CNJ' },
 ];
 
 interface DownloadModeSelectorProps {
   modoSelecionado: PJEDownloadMode;
   onSelecionar: (modo: PJEDownloadMode) => void;
   desabilitado?: boolean;
+  /** Quando 'advogados', oculta o modo by_number (não suportado pelo serviço). */
+  servico?: 'processos' | 'advogados' | null;
+  /** Lista explícita de modos a exibir. Tem precedência sobre `servico`. */
+  modosSuportados?: PJEDownloadMode[];
 }
 
-export function DownloadModeSelector({ modoSelecionado, onSelecionar, desabilitado = false }: DownloadModeSelectorProps) {
+export function DownloadModeSelector({
+  modoSelecionado, onSelecionar, desabilitado = false,
+  servico = null, modosSuportados,
+}: DownloadModeSelectorProps) {
+  const modosVisiveis = modosSuportados
+    ? MODOS.filter((m) => modosSuportados.includes(m.id))
+    : servico === 'advogados'
+      ? MODOS.filter((m) => m.id !== 'by_number')
+      : MODOS;
+
   return (
     <div className={desabilitado ? 'opacity-50 pointer-events-none' : ''}>
       <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
         2. Modo de Download
       </label>
       <div className="space-y-2">
-        {MODOS.map((modo) => {
+        {modosVisiveis.map((modo) => {
           const selecionado = modoSelecionado === modo.id;
           return (
             <button
@@ -43,7 +57,6 @@ export function DownloadModeSelector({ modoSelecionado, onSelecionar, desabilita
                   : 'border-slate-200 hover:border-slate-300 bg-white'
               }`}
             >
-              {/* Radio button visual */}
               <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
                 selecionado ? 'border-slate-900' : 'border-slate-300'
               }`}>

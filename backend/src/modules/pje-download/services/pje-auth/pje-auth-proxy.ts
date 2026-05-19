@@ -11,15 +11,15 @@ import {
 } from './profile-extractor';
 import {
   extractFormFields, extractViewState,
-  detect2FA, extractLoginError, isLoggedInUrl, isProfileSelectionPage,
+  detect2FA, extract2FAFormInfo, extract2FAError,
+  extractLoginError, isLoggedInUrl, isProfileSelectionPage,
   isLoginFormReappearing,
 } from './html-parser';
 import { PJE_BASE } from './constants';
 import type { PJELoginResult, PJEProfileResult, PJEUserInfo } from './types';
 
-/** Número máximo de retries quando o SSO re-exibe o formulário de login */
 const MAX_LOGIN_RETRIES = 3;
-/** Delay entre retries (ms) para dar tempo ao SSO estabilizar a sessão */
+
 const LOGIN_RETRY_DELAY = 3000;
 
 export class PJEAuthProxy {
@@ -42,9 +42,6 @@ export class PJEAuthProxy {
     }
   }
 
-  /**
-   * Executa login completo com retry automático.
-   */
   private async performFreshLogin(cpf: string, password: string): Promise<PJELoginResult> {
     for (let attempt = 0; attempt <= MAX_LOGIN_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -54,21 +51,15 @@ export class PJEAuthProxy {
         await this.sleep(LOGIN_RETRY_DELAY);
       }
 
-      // Fase 1: GET login.seam → redireciona para SSO
       console.log(`[PJE-AUTH] Step 1: GET ${PJE_BASE}/pje/login.seam${attempt > 0 ? ` (tentativa ${attempt + 1})` : ''}`);
       const ssoPage = await this.http.followRedirects('GET', `${PJE_BASE}/pje/login.seam`);
       console.log(`[PJE-AUTH] Step 1 done: finalUrl=${ssoPage.finalUrl} (${ssoPage.body.length} chars)`);
 
-      // If on retry the SSO already recognizes the session and redirects to PJE
       if (attempt > 0 && isLoggedInUrl(ssoPage.finalUrl)) {
         console.log(`[PJE-AUTH] Retry ${attempt}: SSO redirecionou direto para PJE (sessão reconhecida)`);
         return await this.handleLoginResult(ssoPage);
       }
 
-      const pjeCookiesBeforeSSO = this.cookieJar.snapshotDomain('pje.tjba.jus.br');
-      console.log(`[PJE-AUTH] Cookies PJE salvos antes do POST SSO: ${Object.keys(pjeCookiesBeforeSSO).join(', ')}`);
-
-      // Fase 2: POST credenciais
       const loginResult = await this.submitCredentials(ssoPage, cpf, password);
       if (!loginResult) return { needs2FA: false, error: 'Formulário SSO não encontrado.' };
 
@@ -80,16 +71,14 @@ export class PJEAuthProxy {
           return { needs2FA: false, error: errorMsg };
         }
 
-        // No explicit error = transient session issue
         if (attempt < MAX_LOGIN_RETRIES) {
           console.log(`[PJE-AUTH] SSO re-exibiu formulário de login sem erro — sessão transitória detectada`);
-          continue; 
+          continue;
         }
 
         console.error(`[PJE-AUTH] SSO re-exibiu formulário de login após ${MAX_LOGIN_RETRIES + 1} tentativas`);
         return { needs2FA: false, error: 'Falha no login após múltiplas tentativas. O SSO pode estar instável. Tente novamente em alguns minutos.' };
       }
-
 
       return await this.handleLoginResult(loginResult);
     }
@@ -104,22 +93,51 @@ export class PJEAuthProxy {
 
       this.restoreFromSession(stored);
 
-      const formData = extractFormFields(stored.ssoHtml || '', stored.ssoFinalUrl || '');
-      if (!formData.actionUrl) return { needs2FA: false, error: 'Formulário 2FA não encontrado.' };
+      const info = extract2FAFormInfo(stored.ssoHtml || '', stored.ssoFinalUrl || '');
+      if (!info) return { needs2FA: false, error: 'Formulário 2FA não encontrado.' };
 
-      const postFields: Record<string, string> = { ...formData.fields, code };
+      const postFields: Record<string, string> = { ...info.extraFormFields };
+      postFields[info.fieldName] = code;
+      if (info.isTotp) {
 
+        postFields.login = 'Validar';
+      }
+
+      let postUrl = info.actionUrl;
       try {
-        const ssoUrl = new URL(stored.ssoFinalUrl || '');
-        for (const p of ['session_code', 'execution', 'client_id', 'tab_id']) {
-          const v = ssoUrl.searchParams.get(p);
-          if (v) postFields[p] = v;
+        const u = new URL(info.actionUrl);
+        for (const [k, v] of Object.entries(info.keycloakParams)) {
+          if (v && !u.searchParams.has(k)) u.searchParams.set(k, v);
         }
-      } catch { }
+        postUrl = u.toString();
+      } catch {  }
 
-      const result = await this.http.followRedirects('POST', formData.actionUrl, new URLSearchParams(postFields));
+      console.log(
+        `[PJE-AUTH] submit2FA: POST ${postUrl.substring(0, 100)}... ` +
+        `field=${info.fieldName} isTotp=${info.isTotp} ` +
+        `extra=[${Object.keys(info.extraFormFields).join(',')}]`,
+      );
+
+      const result = await this.http.followRedirects(
+        'POST', postUrl, new URLSearchParams(postFields),
+      );
+
+      const errorMsg = extract2FAError(result.body);
+      const stillIn2FA = detect2FA(result.body, result.finalUrl);
+
+      if (errorMsg || stillIn2FA) {
+
+        stored.ssoHtml = result.body;
+        stored.ssoFinalUrl = result.finalUrl;
+        stored.cookies = this.cookieJar.exportAll();
+        sessionStore.set(sessionId, stored);
+
+        const finalMsg = errorMsg || 'Código inválido ou expirado. Tente novamente.';
+        console.warn(`[PJE-AUTH] submit2FA: ${finalMsg}`);
+        return { needs2FA: true, sessionId, error: finalMsg };
+      }
+
       sessionStore.delete(sessionId);
-
       return await this.handleLoginResult(result);
     } catch (err) {
       return { needs2FA: false, error: err instanceof Error ? err.message : 'Erro no 2FA' };
@@ -133,10 +151,8 @@ export class PJEAuthProxy {
 
       this.restoreFromSession(stored);
 
-      // GET página de perfis
       const profilePage = await this.http.followRedirects('GET', `${PJE_BASE}/pje/ng2/dev.seam`);
 
-      // Sessão expirada
       if (this.isSSO(profilePage.finalUrl)) {
         console.error(`[PJE-AUTH] Sessão expirada → SSO: ${profilePage.finalUrl}`);
         if (this.cpf) clearPersistedSession(this.cpf);
@@ -147,7 +163,6 @@ export class PJEAuthProxy {
       let html = profilePage.body;
       let currentUrl = profilePage.finalUrl;
 
-      // Garante que estamos na página de perfis
       if (!isProfileSelectionPage(html)) {
         console.log(`[PJE-AUTH] URL "${currentUrl}" sem papeisUsuarioForm, tentando dev.seam direto`);
         const retry = await this.http.followRedirects('GET', `${PJE_BASE}/pje/ng2/dev.seam`);
@@ -165,7 +180,6 @@ export class PJEAuthProxy {
         return emptyResult('SESSION_EXPIRED');
       }
 
-      // Navega para a página correta se o índice não estiver visível
       if (profileIndex >= 0) {
         const visibleIndices = extractVisibleIndices(html);
         const targetPage = getPageForIndex(profileIndex);
@@ -186,10 +200,8 @@ export class PJEAuthProxy {
         }
       }
 
-      // Executa seleção de perfil
       await this.executeProfileSelection(html, viewState, profileIndex);
 
-      // Valida troca de contexto
       const user = await this.fetchCurrentUser();
       if (user?.idUsuarioLocalizacaoMagistradoServidor) {
         this.idUsuarioLocalizacao = String(user.idUsuarioLocalizacaoMagistradoServidor);
@@ -197,7 +209,6 @@ export class PJEAuthProxy {
         console.log(`[PJE-AUTH] idUsuarioLocalizacao: ${this.idUsuarioLocalizacao}`);
       }
 
-      // Persiste sessão atualizada
       stored.cookies = this.cookieJar.exportAll();
       stored.idUsuarioLocalizacao = this.idUsuarioLocalizacao;
       stored.idUsuario = this.idUsuario;
@@ -210,7 +221,6 @@ export class PJEAuthProxy {
     }
   }
 
-  // Navega para uma página específica do scroller RichFaces
   private async navigateToPage(
     html: string,
     currentViewState: string,
@@ -247,7 +257,6 @@ export class PJEAuthProxy {
     return { html: result.body, viewState: newViewState };
   }
 
-  // Lista TODOS os perfis de TODAS as páginas
   async getAllProfiles(sessionId: string): Promise<PJELoginResult> {
     const stored = sessionStore.get(sessionId);
     if (!stored) return { needs2FA: false, error: 'Sessão não encontrada.' };
@@ -292,8 +301,6 @@ export class PJEAuthProxy {
     const r = await this.http.followRedirects('GET', `${PJE_BASE}/pje/ng2/dev.seam`);
     return `<!-- URL: ${r.finalUrl} -->\n${r.body}`;
   }
-
-  // ─── Métodos privados ──────────────────────────────────────────
 
   private async tryReusePersistedSession(cpf: string): Promise<PJELoginResult | null> {
     const persisted = getPersistedSession(cpf);
@@ -359,8 +366,10 @@ export class PJEAuthProxy {
   }
 
   private async handleLoginResult(result: { body: string; finalUrl: string; status: number }): Promise<PJELoginResult> {
-    // Detecta 2FA (ainda no SSO)
+
     if (detect2FA(result.body, result.finalUrl)) {
+
+      const info = extract2FAFormInfo(result.body, result.finalUrl);
       const sid = generateSessionId();
       sessionStore.set(sid, {
         cookies: this.cookieJar.exportAll(),
@@ -370,11 +379,18 @@ export class PJEAuthProxy {
         ssoFinalUrl: result.finalUrl,
         cpf: this.cpf,
       });
-      console.log(`[PJE-AUTH] 2FA detectado`);
-      return { needs2FA: true, sessionId: sid };
+      console.log(
+        `[PJE-AUTH] 2FA detectado (sessionId=${sid.substring(0, 16)}...) ` +
+        `tipo=${info?.isTotp ? 'TOTP' : 'OTP-email'} field=${info?.fieldName ?? '?'}`,
+      );
+      return {
+        needs2FA: true,
+        sessionId: sid,
+
+        twoFactorType: info?.isTotp ? 'totp' : 'email',
+      };
     }
 
-    // Voltou para form SSO = credenciais inválidas
     if (result.finalUrl.includes('sso.cloud.pje.jus.br/auth/realms')) {
       const errorMsg = extractLoginError(result.body);
       if (errorMsg) return { needs2FA: false, error: errorMsg };
@@ -382,7 +398,6 @@ export class PJEAuthProxy {
         return { needs2FA: false, error: 'CPF ou senha incorretos.' };
     }
 
-    // Chegou ao PJE
     if (isLoggedInUrl(result.finalUrl)) {
       console.log(`[PJE-AUTH] Login OK — URL: ${result.finalUrl}`);
       return await this.validateAndBuildResponse();

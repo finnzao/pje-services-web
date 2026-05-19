@@ -17,16 +17,23 @@ export interface PJEDownloadProgress {
 export interface PJEDownloadedFile {
   processNumber: string; fileName: string; filePath: string;
   fileSize: number; downloadedAt: string;
+  documentType?: string;
 }
 
 export interface PJEDownloadError {
   processNumber?: string; message: string; code?: string; timestamp: string;
+  documentType?: string;
 }
 
 export interface CreateDownloadJobDTO {
   mode: PJEDownloadMode; credentials: PJECredentials;
   processNumbers?: string[]; taskName?: string; isFavorite?: boolean;
-  tagId?: number; tagName?: string; documentType?: number; pjeProfileIndex?: number;
+  tagId?: number; tagName?: string;
+
+  documentTypes?: string[];
+
+  documentType?: string;
+  pjeProfileIndex?: number;
 }
 
 export interface Submit2FADTO { code: string; }
@@ -57,7 +64,7 @@ export interface GerarPlanilhaAdvogadosDTO {
   credentials: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag'; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string; pjeProfileIndex?: number; pjeSessionId?: string;
-  // Compatibilidade: aceita tanto filtro único (legado) quanto array (novo)
+
   filtro?: FiltroAdvogado;
   filtros?: FiltroAdvogado[];
 }

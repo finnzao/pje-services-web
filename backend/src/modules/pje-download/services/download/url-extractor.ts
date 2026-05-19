@@ -9,21 +9,26 @@ import { ByTagStrategy } from './strategies/by-tag.strategy';
 import { ByNumberStrategy } from './strategies/by-number.strategy';
 
 export interface ExtractResult {
-  type: 'direct' | 'queued' | 'error';
+  type: 'direct' | 'queued' | 'error' | 'not_available';
   url?: string;
   fileSize?: number;
   error?: string;
+
+  documentType?: string;
 }
 
 export interface PendingProcess {
   proc: ProcessoInfo;
   requestedAt: number;
+
+  documentType?: string;
 }
 
 export interface CollectedUrl {
   processNumber: string;
   url?: string;
   error?: string;
+  documentType?: string;
 }
 
 const DOWNLOAD_AVAILABLE_STATUSES = ['S', 'DISPONIVEL', 'AVAILABLE'];
@@ -56,7 +61,7 @@ export class UrlExtractor {
     const strategy = strategies[mode];
     if (!strategy) throw new Error(`Modo desconhecido: ${mode}`);
 
-    console.log(`[URL-EXTRACTOR] listProcesses mode=${mode} taskName="${params.taskName}" tagId=${params.tagId} isFavorite=${params.isFavorite}`);
+    console.log(`[URL-EXTRACTOR] listProcesses mode=${mode} taskName="${params.taskName}" tagId=${params.tagId} isFavorite=${params.isFavorite} processNumbers=${params.processNumbers?.length ?? 0}`);
 
     try {
       const result = await strategy.listProcesses(this.session, {
@@ -77,9 +82,15 @@ export class UrlExtractor {
     }
   }
 
-  async extractDownloadUrl(proc: ProcessoInfo): Promise<ExtractResult> {
+  async extractDownloadUrl(
+    proc: ProcessoInfo,
+    options: { documentTypeId?: string; documentType?: string } = {},
+  ): Promise<ExtractResult> {
     const { idProcesso, numeroProcesso, idTaskInstance } = proc;
-    if (!idProcesso) return { type: 'error', error: 'idProcesso ausente' };
+    const documentTypeId = (options.documentTypeId || '').trim();
+    const documentType = options.documentType;
+
+    if (!idProcesso) return { type: 'error', error: 'idProcesso ausente', documentType };
 
     try {
       const caRaw = await pjeApiGet<string>(
@@ -87,7 +98,11 @@ export class UrlExtractor {
         `painelUsuario/gerarChaveAcessoProcesso/${idProcesso}`,
       );
       if (!caRaw || typeof caRaw !== 'string' || caRaw.length < 10) {
-        return { type: 'error', error: `Chave de acesso inválida (${typeof caRaw}, len=${String(caRaw).length})` };
+        return {
+          type: 'error',
+          error: `Chave de acesso inválida (${typeof caRaw}, len=${String(caRaw).length})`,
+          documentType,
+        };
       }
       const ca = caRaw.replace(/^"|"$/g, '');
 
@@ -116,20 +131,31 @@ export class UrlExtractor {
         /javax\.faces\.ViewState[^>]+value="([^"]+)"/,
       );
       if (!viewStateMatch?.[1]) {
-        return { type: 'error', error: `ViewState não encontrado (HTML ${autosHtml.length} chars)` };
+        return { type: 'error', error: `ViewState não encontrado (HTML ${autosHtml.length} chars)`, documentType };
       }
 
       const downloadBtnId = this.extractDownloadButtonId(autosHtml);
       if (!downloadBtnId) {
-        return { type: 'error', error: 'Botão de download não encontrado' };
+        return { type: 'error', error: 'Botão de download não encontrado', documentType };
+      }
+
+      if (documentTypeId) {
+        const optionExists = this.optionExistsInSelect(autosHtml, documentTypeId);
+        if (!optionExists) {
+          console.log(`[URL-EXTRACTOR] ${numeroProcesso}: tipo "${documentType}" (id=${documentTypeId}) não existe neste processo`);
+          return {
+            type: 'not_available',
+            error: `Tipo "${documentType}" não disponível neste processo`,
+            documentType,
+          };
+        }
       }
 
       const now = new Date();
       const currentDate = `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
 
-      const postBody = new URLSearchParams({
+      const postBodyParams: Record<string, string> = {
         AJAXREQUEST: '_viewRoot',
-        'navbar:cbTipoDocumento': '0',
         'navbar:idDe': '', 'navbar:idAte': '',
         'navbar:dtInicioInputDate': '',
         'navbar:dtInicioInputCurrentDate': currentDate,
@@ -140,7 +166,13 @@ export class UrlExtractor {
         'javax.faces.ViewState': viewStateMatch[1],
         [downloadBtnId]: downloadBtnId,
         'AJAX:EVENTS_COUNT': '1',
-      });
+      };
+
+      if (documentTypeId) {
+        postBodyParams['navbar:cbTipoDocumento'] = documentTypeId;
+      }
+
+      const postBody = new URLSearchParams(postBodyParams);
 
       const downloadRes = await fetch(
         `${PJE_BASE}/pje/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam`,
@@ -152,6 +184,8 @@ export class UrlExtractor {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'X-Requested-With': 'XMLHttpRequest',
             'Faces-Request': 'partial/ajax',
+            Origin: PJE_BASE,
+            Referer: autosUrl,
           },
           body: postBody.toString(),
           redirect: 'follow',
@@ -160,36 +194,72 @@ export class UrlExtractor {
 
       const responseHtml = await downloadRes.text();
 
-      const s3Match = responseHtml.match(
-        /window\.open\('(https:\/\/[^']*s3[^']*\.pdf[^']*?)'/,
-      );
+      const s3Match =
+        responseHtml.match(/window\.open\('(https:\/\/[^']*s3[^']*\.pdf[^']*?)'/) ||
+        responseHtml.match(/(https:\/\/[^'"]+s3[^'"]*\.pdf[^'"]*)/);
       if (s3Match?.[1]) {
         let fileSize: number | undefined;
         try {
           const head = await fetch(s3Match[1], { method: 'HEAD' });
           const cl = head.headers.get('content-length');
           if (cl) fileSize = parseInt(cl, 10);
-        } catch { /* silent */ }
+        } catch {  }
+        return { type: 'direct', url: s3Match[1], fileSize, documentType };
+      }
 
-        return { type: 'direct', url: s3Match[1], fileSize };
+      const notAvailablePatterns = [
+        /nenhum documento/i,
+        /sem documentos/i,
+        /nada foi encontrado/i,
+        /0\s*documentos?/i,
+      ];
+      if (notAvailablePatterns.some((p) => p.test(responseHtml))) {
+        console.log(`[URL-EXTRACTOR] ${numeroProcesso}: PJE indica que tipo "${documentType ?? 'todos'}" não existe`);
+        return {
+          type: 'not_available',
+          error: documentType
+            ? `Tipo "${documentType}" não disponível neste processo`
+            : 'Nenhum documento encontrado neste processo',
+          documentType,
+        };
       }
 
       const isQueued =
         responseHtml.includes('será disponibilizado') ||
+        responseHtml.includes('sera disponibilizado') ||
         responseHtml.includes('será gerado') ||
         responseHtml.includes('está sendo gerado') ||
         responseHtml.includes('Área de download') ||
+        responseHtml.includes('area de download') ||
         /window\.open\(''\)/.test(responseHtml) ||
-        responseHtml.length > 5000;
+        /window\.open\(""\)/.test(responseHtml) ||
+        /solicita[çc][ãa]o\s+realizada/i.test(responseHtml) ||
+        /documento\s+solicitado/i.test(responseHtml);
 
-      if (isQueued) return { type: 'queued' };
+      if (isQueued) return { type: 'queued', documentType };
 
-      console.warn(`[URL-EXTRACTOR] ${numeroProcesso}: Resposta inesperada (${responseHtml.length} chars). Primeiros 500: ${responseHtml.slice(0, 500)}`);
-      return { type: 'error', error: 'Resposta inesperada do PJE' };
+      if (documentTypeId && responseHtml.length < 5000) {
+        return {
+          type: 'not_available',
+          error: `Tipo "${documentType}" possivelmente não disponível (resposta inesperada)`,
+          documentType,
+        };
+      }
+      if (responseHtml.length > 5000) {
+
+        return { type: 'queued', documentType };
+      }
+
+      console.warn(
+        `[URL-EXTRACTOR] ${numeroProcesso}: Resposta inesperada (${responseHtml.length} chars). ` +
+        `Primeiros 500: ${responseHtml.slice(0, 500)}`,
+      );
+      return { type: 'error', error: 'Resposta inesperada do PJE', documentType };
     } catch (err) {
       return {
         type: 'error',
         error: err instanceof Error ? err.message : 'Erro ao extrair URL',
+        documentType,
       };
     }
   }
@@ -204,7 +274,8 @@ export class UrlExtractor {
     const remaining = new Map<string, PendingProcess>();
     for (const item of pending) {
       const digits = item.proc.numeroProcesso.replace(/\D/g, '');
-      remaining.set(digits, item);
+      const key = `${digits}::${item.documentType ?? ''}`;
+      remaining.set(key, item);
     }
 
     await sleep(DOWNLOAD_POLL_INITIAL);
@@ -224,37 +295,42 @@ export class UrlExtractor {
           const status = (dl.situacaoDownload || '').toUpperCase();
           if (!DOWNLOAD_AVAILABLE_STATUSES.includes(status)) continue;
 
-          let matchedDigits: string | null = null;
+          let matchedKey: string | null = null;
 
           for (const dlItem of dl.itens || []) {
             const itemDigits = (dlItem.numeroProcesso || '').replace(/\D/g, '');
-            if (remaining.has(itemDigits)) { matchedDigits = itemDigits; break; }
-            if (dlItem.idProcesso && [...remaining.values()].some((r) => r.proc.idProcesso === dlItem.idProcesso)) {
-              const found = [...remaining.entries()].find(([, r]) => r.proc.idProcesso === dlItem.idProcesso);
-              if (found) { matchedDigits = found[0]; break; }
+            for (const [key, item] of remaining) {
+              if (key.startsWith(`${itemDigits}::`)) { matchedKey = key; break; }
+              if (dlItem.idProcesso && item.proc.idProcesso === dlItem.idProcesso) { matchedKey = key; break; }
+            }
+            if (matchedKey) break;
+          }
+
+          if (!matchedKey) {
+            const dlDigits = (dl.nomeArquivo || '').replace(/\D/g, '');
+            for (const [key] of remaining) {
+              const keyDigits = key.split('::')[0];
+              if (dlDigits.includes(keyDigits)) { matchedKey = key; break; }
             }
           }
 
-          if (!matchedDigits) {
-            const dlDigits = dl.nomeArquivo.replace(/\D/g, '');
-            for (const [digits] of remaining) {
-              if (dlDigits.includes(digits)) { matchedDigits = digits; break; }
-            }
-          }
-
-          if (matchedDigits && dl.hashDownload) {
-            const item = remaining.get(matchedDigits)!;
+          if (matchedKey && dl.hashDownload) {
+            const item = remaining.get(matchedKey)!;
             try {
               const s3Url = await this.generateS3DownloadUrl(dl.hashDownload);
               if (s3Url) {
-                results.push({ processNumber: item.proc.numeroProcesso, url: s3Url });
-                remaining.delete(matchedDigits);
-                console.log(`[URL-EXTRACTOR] Coletado: ${item.proc.numeroProcesso}`);
+                results.push({
+                  processNumber: item.proc.numeroProcesso,
+                  url: s3Url,
+                  documentType: item.documentType,
+                });
+                remaining.delete(matchedKey);
+                console.log(`[URL-EXTRACTOR] Coletado: ${item.proc.numeroProcesso}${item.documentType ? ` (${item.documentType})` : ''}`);
               }
-            } catch { /* silent */ }
+            } catch {  }
           }
         }
-      } catch { /* silent */ }
+      } catch {  }
 
       if (remaining.size > 0) {
         const delay = Math.min(10000 + pollCount * 2500, 30000);
@@ -266,10 +342,25 @@ export class UrlExtractor {
       results.push({
         processNumber: item.proc.numeroProcesso,
         error: `Timeout (${Math.round(DOWNLOAD_TIMEOUT / 1000)}s) aguardando download`,
+        documentType: item.documentType,
       });
     }
 
     return results;
+  }
+
+  private optionExistsInSelect(html: string, valueId: string): boolean {
+    if (!valueId) return true;
+    const selectMatch = html.match(
+      /<select[^>]+(?:id|name)="navbar:cbTipoDocumento"[^>]*>([\s\S]*?)<\/select>/i,
+    );
+    if (!selectMatch) {
+
+      console.warn('[URL-EXTRACTOR] <select cbTipoDocumento> não encontrado no HTML');
+      return true;
+    }
+    const optionPattern = new RegExp(`<option[^>]+value="${escapeRegex(valueId)}"`, 'i');
+    return optionPattern.test(selectMatch[1]);
   }
 
   private async fetchAvailableDownloads(): Promise<any[]> {
@@ -289,7 +380,7 @@ export class UrlExtractor {
           const data = (await res.json()) as any;
           return data?.downloadsDisponiveis || [];
         }
-      } catch { /* try next */ }
+      } catch {  }
     }
 
     return [];
@@ -311,7 +402,7 @@ export class UrlExtractor {
           const s3Url = await res.text();
           return s3Url ? s3Url.replace(/^"|"$/g, '').trim() : null;
         }
-      } catch { /* try next */ }
+      } catch {  }
     }
 
     return null;
@@ -347,4 +438,8 @@ export class UrlExtractor {
     const allIds = [...allButtons.keys()];
     return allIds[allIds.length - 1];
   }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

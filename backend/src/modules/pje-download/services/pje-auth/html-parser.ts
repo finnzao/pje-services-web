@@ -1,10 +1,9 @@
 import type { FormFieldsResult } from './types';
 
-// Mapa completo de entidades HTML com foco nas que aparecem em nomes do PJE
 const HTML_ENTITY_MAP: Record<string, string> = {
   '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"',
   '&#39;': "'", '&apos;': "'", '&nbsp;': ' ', '&middot;': '·',
-  // Minúsculas
+
   '&ccedil;': 'ç', '&atilde;': 'ã', '&otilde;': 'õ',
   '&aacute;': 'á', '&eacute;': 'é', '&iacute;': 'í', '&oacute;': 'ó', '&uacute;': 'ú',
   '&agrave;': 'à', '&egrave;': 'è', '&igrave;': 'ì', '&ograve;': 'ò', '&ugrave;': 'ù',
@@ -12,8 +11,8 @@ const HTML_ENTITY_MAP: Record<string, string> = {
   '&atild;': 'ã',  '&otild;': 'õ',  '&ntilde;': 'ñ',
   '&auml;': 'ä', '&euml;': 'ë', '&iuml;': 'ï', '&ouml;': 'ö', '&uuml;': 'ü',
   '&aring;': 'å', '&aelig;': 'æ', '&szlig;': 'ß',
-  '&ordf;': 'ª', '&ordm;': 'º',   // ← CRÍTICO: "11ª VARA", "1º"
-  // Maiúsculas
+  '&ordf;': 'ª', '&ordm;': 'º',
+
   '&Ccedil;': 'Ç', '&Atilde;': 'Ã', '&Otilde;': 'Õ',
   '&Aacute;': 'Á', '&Eacute;': 'É', '&Iacute;': 'Í', '&Oacute;': 'Ó', '&Uacute;': 'Ú',
   '&Agrave;': 'À', '&Egrave;': 'È', '&Igrave;': 'Ì', '&Ograve;': 'Ò', '&Ugrave;': 'Ù',
@@ -24,11 +23,11 @@ const HTML_ENTITY_MAP: Record<string, string> = {
 
 export function decodeHtmlEntities(text: string): string {
   return text
-    // Named entities via mapa
+
     .replace(/&[a-zA-Z]+;/g, (entity) => HTML_ENTITY_MAP[entity] ?? entity)
-    // Numeric decimal: &#186; → 'º'
+
     .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(parseInt(c, 10)))
-    // Numeric hex: &#xBA; → 'º'
+
     .replace(/&#x([0-9a-fA-F]+);/g, (_, c) => String.fromCharCode(parseInt(c, 16)))
     .trim();
 }
@@ -48,12 +47,12 @@ export function cleanText(html: string): string {
 
 export function extractViewState(html: string): string | null {
   const strategies = [
-    // Dentro do form papeisUsuarioForm
+
     () => {
       const m = html.match(/<form[^>]+(?:id|name)="papeisUsuarioForm"[^>]*>([\s\S]*?)<\/form>/i);
       return m ? extractVSFromFragment(m[1]) : null;
     },
-    // Qualquer form POST
+
     () => {
       for (const fm of html.matchAll(/<form[^>]+method="post"[^>]*>([\s\S]*?)<\/form>/gi)) {
         const vs = extractVSFromFragment(fm[1]);
@@ -97,7 +96,6 @@ export function extractFormFields(html: string, baseUrl: string): FormFieldsResu
   let formHtml = '';
   let actionUrl: string | null = null;
 
-  // Prioriza form com id kc-form-login (SSO Keycloak)
   const kcMatch = html.match(/<form[^>]+id="kc-form-login"[^>]*>([\s\S]*?)<\/form>/i);
   if (kcMatch) {
     formHtml = kcMatch[0];
@@ -130,7 +128,6 @@ export function extractFormFields(html: string, baseUrl: string): FormFieldsResu
     return { actionUrl, fields };
   }
 
-  // Extrai campos hidden e text (não submit/button)
   const inputRegex = /<input[^>]*>/gi;
   let m;
   while ((m = inputRegex.exec(formHtml)) !== null) {
@@ -148,56 +145,42 @@ export function extractFormFields(html: string, baseUrl: string): FormFieldsResu
   return { actionUrl, fields };
 }
 
-/**
- * Detecta se a página retornada pelo SSO é um formulário de 2FA.
- *
- * FIX: Diferencia o formulário de login (username/password) do formulário de 2FA.
- * Quando o SSO re-exibe o formulário de login (por race condition ou sessão
- * transitória), isso NÃO deve ser tratado como 2FA.
- *
- * Também removidos termos genéricos demais ('digit', 'código') que causavam
- * falsos positivos em páginas em português.
- */
 export function detect2FA(html: string, url: string): boolean {
   const lower = html.toLowerCase();
 
-  // Só detecta se URL ainda está no SSO (não voltou para pje.tjba.jus.br)
   const stillInSSO = url.includes('sso.cloud.pje.jus.br');
   if (!stillInSSO) return false;
 
-  // Se o formulário de login (username/password) está presente, NÃO é 2FA.
-  // É o SSO pedindo credenciais novamente (sessão não se estabeleceu).
   const hasLoginForm = lower.includes('kc-form-login') &&
     (lower.includes('name="username"') || lower.includes('name="password"'));
   if (hasLoginForm) {
-    console.log('[PJE-AUTH] detect2FA: formulário de login detectado (username/password presente) — NÃO é 2FA');
+    console.log('[PJE-AUTH] detect2FA: formulário de login detectado — NÃO é 2FA');
     return false;
   }
 
-  // Padrões específicos de 2FA (removidos 'digit' e 'código' por serem genéricos demais)
+  const hasCodeInput = /<input[^>]+name="(otp|code|totp)"/i.test(html) ||
+    /<input[^>]+id="(otp|code|totp)"/i.test(html);
+
   const specific2FAPatterns = [
-    'codigo enviado',       // mensagem explícita de código enviado
-    'verification code',    // inglês
-    'otp',                  // one-time password
-    'two-factor',           // inglês
-    'totp',                 // time-based OTP
-    'authenticator',        // app autenticador
-    'token de acesso',      // PJE específico
-    'informe o código',     // instrução de 2FA
-    'enviamos um código',   // instrução de 2FA
-    'código de verificação', // específico o suficiente
+    'código enviado',
+    'verification code',
+    'otp',
+    'two-factor',
+    'totp',
+    'microsoft authenticator',
+    'google authenticator',
+    'aplicativo autenticador',
+    'authenticator app',
+    'token de acesso',
+    'informe o código',
+    'enviamos um código',
+    'código de verificação',
+    'one-time',
   ];
-
   const bodyHas2FA = specific2FAPatterns.some(p => lower.includes(p));
-  const urlHas2FA = url.includes('otp') || url.includes('totp');
 
-  // Verificação adicional: se a página tem um campo de input para código
-  // mas NÃO tem campos username/password, é provavelmente 2FA
-  const hasCodeInput = lower.includes('name="code"') ||
-    lower.includes('name="otp"') ||
-    lower.includes('name="totp"') ||
-    lower.includes('id="code"') ||
-    lower.includes('id="otp"');
+  const urlHas2FA = /login-actions\/authenticate/.test(url) &&
+    (lower.includes('name="otp"') || lower.includes('name="code"') || lower.includes('name="totp"'));
 
   const is2FA = bodyHas2FA || urlHas2FA || hasCodeInput;
 
@@ -208,10 +191,98 @@ export function detect2FA(html: string, url: string): boolean {
   return is2FA;
 }
 
-/**
- * Verifica se a página do SSO é apenas o formulário de login re-exibido
- * (não é 2FA, não é erro — apenas o SSO pedindo credenciais novamente).
- */
+export interface TwoFactorFormInfo {
+
+  actionUrl: string;
+
+  fieldName: 'otp' | 'code';
+
+  isTotp: boolean;
+
+  extraFormFields: Record<string, string>;
+
+  keycloakParams: {
+    session_code?: string;
+    execution?: string;
+    client_id?: string;
+    tab_id?: string;
+  };
+}
+
+export function extract2FAFormInfo(html: string, currentUrl: string): TwoFactorFormInfo | null {
+
+  const formData = extractFormFields(html, currentUrl);
+  if (!formData.actionUrl) {
+    console.warn('[PJE-AUTH] extract2FAFormInfo: form sem actionUrl');
+    return null;
+  }
+
+  const lower = html.toLowerCase();
+  const hasOtpInput = /<input[^>]+name="otp"/i.test(html);
+  const hasCodeInput = /<input[^>]+name="code"/i.test(html);
+
+  const totpIndicators = [
+    /microsoft\s*authenticator/i,
+    /google\s*authenticator/i,
+    /aplicativo\s*autenticador/i,
+    /app\s*autenticador/i,
+    /authenticator\s*app/i,
+    /\btotp\b/i,
+    /one[\s-]?time[\s-]?password/i,
+  ];
+  const hasTotpText = totpIndicators.some((re) => re.test(lower));
+
+  let isTotp: boolean;
+  let fieldName: 'otp' | 'code';
+  if (hasOtpInput) {
+    isTotp = true;
+    fieldName = 'otp';
+  } else if (hasCodeInput) {
+    isTotp = hasTotpText;
+    fieldName = 'code';
+  } else {
+
+    isTotp = hasTotpText;
+    fieldName = isTotp ? 'otp' : 'code';
+  }
+
+  const extraFormFields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(formData.fields)) {
+    if (k !== fieldName && k !== 'otp' && k !== 'code' && k !== 'totp') {
+      extraFormFields[k] = v;
+    }
+  }
+
+  const keycloakParams: TwoFactorFormInfo['keycloakParams'] = {};
+  const sources = [formData.actionUrl, currentUrl];
+  for (const src of sources) {
+    try {
+      const u = new URL(src);
+      for (const p of ['session_code', 'execution', 'client_id', 'tab_id'] as const) {
+        if (!keycloakParams[p]) {
+          const v = u.searchParams.get(p);
+          if (v) keycloakParams[p] = v;
+        }
+      }
+    } catch {  }
+  }
+
+  console.log(
+    `[PJE-AUTH] extract2FAFormInfo: field=${fieldName} isTotp=${isTotp} ` +
+    `actionUrl=${formData.actionUrl.substring(0, 80)}... ` +
+    `extraFields=[${Object.keys(extraFormFields).join(',')}] ` +
+    `kcParams=[${Object.keys(keycloakParams).join(',')}]`,
+  );
+
+  return {
+    actionUrl: formData.actionUrl,
+    fieldName,
+    isTotp,
+    extraFormFields,
+    keycloakParams,
+  };
+}
+
 export function isLoginFormReappearing(html: string, url: string): boolean {
   if (!url.includes('sso.cloud.pje.jus.br')) return false;
   const lower = html.toLowerCase();
@@ -244,18 +315,39 @@ export function extractLoginError(html: string): string | null {
   return null;
 }
 
-// Verifica se URL é do painel PJE (autenticado)
+export function extract2FAError(html: string): string | null {
+  const lower = html.toLowerCase();
+  const patterns: Array<{ regex: RegExp; message: string }> = [
+    { regex: /invalid.*code/i, message: 'Código inválido. Tente novamente.' },
+    { regex: /código\s*inválido/i, message: 'Código inválido. Tente novamente.' },
+    { regex: /\bexpired\b/i, message: 'Código expirado. Tente novamente.' },
+    { regex: /\bexpirado\b/i, message: 'Código expirado. Tente novamente.' },
+    { regex: /\bincorrect\b/i, message: 'Código incorreto. Tente novamente.' },
+    { regex: /\bincorreto\b/i, message: 'Código incorreto. Tente novamente.' },
+    { regex: /tente\s*novamente/i, message: 'Código inválido. Tente novamente.' },
+  ];
+  for (const { regex, message } of patterns) {
+    if (regex.test(lower)) return message;
+  }
+
+  const fb = html.match(/class="[^"]*kc-feedback-text[^"]*"[^>]*>([\s\S]*?)<\/(?:span|div)>/i);
+  if (fb) {
+    const text = decodeHtmlEntities(stripHtml(fb[1] || '')).trim();
+    if (text.length > 2 && text.length < 200) return text;
+  }
+  return null;
+}
+
 export function isLoggedInUrl(url: string): boolean {
   if (!url.includes('pje.tjba.jus.br')) return false;
   return url.includes('painel') ||
     url.includes('dev.seam') ||
     url.includes('ng2') ||
-    url.includes('token.seam') || // token.seam = primeiro destino após SSO
+    url.includes('token.seam') ||
     url.endsWith('/pje/') ||
     url.match(/\/pje\/(Processo|magistrado|servidor|advogado)/) !== null;
 }
 
-// Verifica se está na página de seleção de perfis
 export function isProfileSelectionPage(html: string): boolean {
   return html.includes('papeisUsuarioForm') || html.includes('dtPerfil');
 }

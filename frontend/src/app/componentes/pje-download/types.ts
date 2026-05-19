@@ -1,7 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 export type EtapaWizard = 'login' | '2fa' | 'perfil' | 'download' | 'historico';
-export type PJEDownloadMode = 'by_task' | 'by_tag';
+export type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number';
 export type ServicoAtivo = 'processos' | 'advogados';
 
 export type PJEJobStatus =
@@ -13,13 +11,15 @@ export type PJEJobStatus =
 export interface EstadoExecucao {
   isDownloading: boolean; downloadProgress: number; currentProcess: string;
   totalProcesses: number; completedProcesses: number; failedProcesses: number;
+  notAvailableCount: number;
   downloadStatus: 'idle' | 'listing' | 'downloading' | 'completed' | 'failed' | 'cancelled';
   downloadMessage: string; bytesDownloaded: number;
 }
 
 export const ESTADO_EXECUCAO_INICIAL: EstadoExecucao = {
   isDownloading: false, downloadProgress: 0, currentProcess: '', totalProcesses: 0,
-  completedProcesses: 0, failedProcesses: 0, downloadStatus: 'idle', downloadMessage: '', bytesDownloaded: 0,
+  completedProcesses: 0, failedProcesses: 0, notAvailableCount: 0,
+  downloadStatus: 'idle', downloadMessage: '', bytesDownloaded: 0,
 };
 
 export interface UsuarioPJE { idUsuario: number; nomeUsuario: string; login: string; perfil: string; nomePerfil: string; idUsuarioLocalizacaoMagistradoServidor: number; }
@@ -30,11 +30,20 @@ export interface EtiquetaPJE { id: number; nomeTag: string; nomeTagCompleto: str
 export interface SessaoPJE {
   autenticado: boolean; sessionId?: string; usuario?: UsuarioPJE; perfis?: PerfilPJE[];
   perfilSelecionado?: PerfilPJE; tarefas?: TarefaPJE[]; tarefasFavoritas?: TarefaPJE[]; etiquetas?: EtiquetaPJE[];
+  twoFactorType?: 'totp' | 'email';
 }
 
-export interface ParametrosDownload { mode: PJEDownloadMode; taskName?: string; isFavorite?: boolean; tagId?: number; tagName?: string; documentType?: number; pjeProfileIndex?: number; }
-export interface PJEDownloadedFile { processNumber: string; fileName: string; filePath: string; fileSize: number; downloadedAt: string; }
-export interface PJEDownloadError { processNumber?: string; message: string; code?: string; timestamp: string; }
+export interface ParametrosDownload {
+  mode: PJEDownloadMode;
+  taskName?: string; isFavorite?: boolean;
+  tagId?: number; tagName?: string;
+  processNumbers?: string[];
+  documentTypes?: string[];
+  pjeProfileIndex?: number;
+}
+
+export interface PJEDownloadedFile { processNumber: string; fileName: string; filePath: string; fileSize: number; downloadedAt: string; documentType?: string; }
+export interface PJEDownloadError { processNumber?: string; message: string; code?: string; timestamp: string; documentType?: string; }
 export interface DownloadJobResponse { id: string; userId: number; mode: PJEDownloadMode; status: PJEJobStatus; progress: number; totalProcesses: number; successCount: number; failureCount: number; files: PJEDownloadedFile[]; errors: PJEDownloadError[]; createdAt: string; startedAt?: string; completedAt?: string; }
 export interface PJEDownloadProgress { jobId: string; status: PJEJobStatus; progress: number; totalProcesses: number; successCount: number; failureCount: number; currentProcess?: string; files: PJEDownloadedFile[]; errors: PJEDownloadError[]; message: string; timestamp: number; }
 export interface EntradaLog { id: number; timestamp: string; nivel: 'info' | 'warn' | 'error' | 'success'; modulo: string; mensagem: string; dados?: unknown; }
@@ -61,6 +70,7 @@ export const STATUS_CONFIG: Record<PJEJobStatus, StatusConfig> = {
 export const MODE_CONFIG: Record<PJEDownloadMode, { label: string; description: string }> = {
   by_task: { label: 'Por Tarefa', description: 'Baixar processos de uma tarefa' },
   by_tag: { label: 'Por Etiqueta', description: 'Baixar por etiqueta/marcador' },
+  by_number: { label: 'Por Número', description: 'Baixar lista de processos por nº CNJ' },
 };
 
 const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying'];

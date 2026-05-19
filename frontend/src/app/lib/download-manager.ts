@@ -3,14 +3,27 @@ import { FileSystemManager, buildFolderName } from './filesystem-manager';
 export interface DownloadProgress {
   phase: 'initializing' | 'listing' | 'downloading' | 'collecting' | 'finalizing' | 'done' | 'error' | 'cancelled';
   totalProcesses: number;
+
+  totalRequests: number;
   currentIndex: number;
   currentProcess: string;
+  currentDocumentType?: string;
   successCount: number;
   failedCount: number;
   queuedCount: number;
+
+  notAvailableCount: number;
   bytesDownloaded: number;
   message: string;
-  files: Array<{ name: string; size: number; status: 'ok' | 'downloading' | 'error'; error?: string }>;
+  files: Array<{
+    name: string;
+    size: number;
+    status: 'ok' | 'downloading' | 'error' | 'not_available';
+    error?: string;
+    documentType?: string;
+  }>;
+
+  documentTypes: string[];
 }
 
 export type ProgressCallback = (progress: DownloadProgress) => void;
@@ -24,9 +37,10 @@ export interface DownloadManagerParams {
   tagId?: number;
   isFavorite?: boolean;
   processNumbers?: string[];
+
+  documentTypes?: string[];
 }
 
-/** Máximo de downloads de PDF simultâneos no browser */
 const MAX_CONCURRENT_FILE_DOWNLOADS = 3;
 
 function formatBytes(bytes: number): string {
@@ -36,10 +50,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-/**
- * Resolve uma base para construção de URLs absolutas.
- * Se apiBase for vazio (proxy via Next.js rewrite), usa window.location.origin.
- */
 function resolveBaseUrl(apiBase: string): string {
   if (apiBase) return apiBase;
   if (typeof window !== 'undefined') return window.location.origin;
@@ -65,10 +75,6 @@ async function downloadWithFallback(
   }
 }
 
-/**
- * Semáforo simples para limitar downloads paralelos no browser.
- * Evita saturar a rede do cliente com muitos fetches simultâneos.
- */
 class Semaphore {
   private queue: Array<() => void> = [];
   private active = 0;
@@ -140,6 +146,10 @@ export class DownloadManager {
       if (params.processNumbers?.length) {
         sseUrl.searchParams.set('processNumbers', params.processNumbers.join(','));
       }
+      if (params.documentTypes && params.documentTypes.length > 0) {
+
+        sseUrl.searchParams.set('documentTypes', params.documentTypes.join(','));
+      }
 
       await this.processSSE(sseUrl.toString(), params.apiBase, onProgress);
 
@@ -148,16 +158,18 @@ export class DownloadManager {
 
       this.progress.phase = 'finalizing';
       this.progress.message = method === 'fsapi'
-        ? `${this.progress.successCount} processos salvos em ${folderName}/`
+        ? `${this.progress.successCount} arquivos salvos em ${folderName}/`
         : 'Gerando arquivo ZIP...';
       onProgress({ ...this.progress });
 
       await this.fs.finalize(folderName);
 
       this.progress.phase = 'done';
-      this.progress.message = `Concluído: ${this.progress.successCount}/${this.progress.totalProcesses} processos baixados (${formatBytes(this.progress.bytesDownloaded)})`;
+      const summary = this.progress.notAvailableCount > 0
+        ? `Concluído: ${this.progress.successCount} arquivo(s) baixado(s), ${this.progress.notAvailableCount} tipo(s) não disponível(eis) (${formatBytes(this.progress.bytesDownloaded)})`
+        : `Concluído: ${this.progress.successCount}/${this.progress.totalRequests || this.progress.totalProcesses} (${formatBytes(this.progress.bytesDownloaded)})`;
+      this.progress.message = summary;
       onProgress({ ...this.progress });
-
     } catch (err) {
       if (this.abortController?.signal.aborted) {
         this.progress.phase = 'cancelled';
@@ -186,10 +198,8 @@ export class DownloadManager {
       const es = new EventSource(url);
       const signal = this.abortController!.signal;
 
-      // Semáforo para limitar downloads de arquivo paralelos no browser
       const sem = new Semaphore(MAX_CONCURRENT_FILE_DOWNLOADS);
       const pendingDownloads: Promise<void>[] = [];
-      let sseFinished = false;
 
       signal.addEventListener('abort', () => {
         es.close();
@@ -200,8 +210,12 @@ export class DownloadManager {
         const data = JSON.parse(e.data);
         this.progress.phase = 'downloading';
         this.progress.totalProcesses = data.total;
-        this.progress.message = `${data.total} processos encontrados` +
-          (data.parallelSlots ? ` (${data.parallelSlots} slots paralelos)` : '');
+        this.progress.totalRequests = data.totalRequests || data.total;
+        this.progress.documentTypes = data.documentTypes || [];
+        const tiposLabel = this.progress.documentTypes.length > 0
+          ? ` × ${this.progress.documentTypes.length} tipo(s)`
+          : '';
+        this.progress.message = `${data.total} processo(s) encontrado(s)${tiposLabel}`;
         onProgress({ ...this.progress });
       });
 
@@ -209,15 +223,20 @@ export class DownloadManager {
         const data = JSON.parse(e.data);
         this.progress.currentIndex = data.index;
         this.progress.currentProcess = data.processNumber;
-        this.progress.message = `Solicitando ${data.index}/${data.total}: ${data.processNumber}`;
+        this.progress.currentDocumentType = data.documentType ?? undefined;
+        const tipo = data.documentType ? ` [${data.documentType}]` : '';
+        this.progress.message = `${data.index}/${data.total}: ${data.processNumber}${tipo}`;
         onProgress({ ...this.progress });
       });
 
       es.addEventListener('url', (e: any) => {
         const data = JSON.parse(e.data);
         const fileName = data.fileName || `${data.processNumber}.pdf`;
+        const documentType = data.documentType ?? undefined;
 
-        this.progress.files.push({ name: fileName, size: 0, status: 'downloading' });
+        this.progress.files.push({
+          name: fileName, size: 0, status: 'downloading', documentType,
+        });
         onProgress({ ...this.progress });
 
         const downloadPromise = (async () => {
@@ -232,13 +251,17 @@ export class DownloadManager {
 
             await this.fs.saveFile(fileName, blob);
 
-            const fileEntry = this.progress.files.find(f => f.name === fileName);
+            const fileEntry = this.progress.files.find(
+              (f) => f.name === fileName && f.status === 'downloading',
+            );
             if (fileEntry) { fileEntry.size = blob.size; fileEntry.status = 'ok'; }
 
             this.progress.successCount++;
             this.progress.bytesDownloaded += blob.size;
           } catch (err) {
-            const fileEntry = this.progress.files.find(f => f.name === fileName);
+            const fileEntry = this.progress.files.find(
+              (f) => f.name === fileName && f.status === 'downloading',
+            );
             if (fileEntry) {
               fileEntry.status = 'error';
               fileEntry.error = err instanceof Error ? err.message : 'Erro';
@@ -256,7 +279,21 @@ export class DownloadManager {
       es.addEventListener('queued', (e: any) => {
         const data = JSON.parse(e.data);
         this.progress.queuedCount++;
-        this.progress.message = `${data.processNumber}: aguardando PJE gerar PDF...`;
+        const tipo = data.documentType ? ` [${data.documentType}]` : '';
+        this.progress.message = `${data.processNumber}${tipo}: aguardando PJE gerar PDF...`;
+        onProgress({ ...this.progress });
+      });
+
+      es.addEventListener('not_available', (e: any) => {
+        const data = JSON.parse(e.data);
+        const documentType = data.documentType ?? undefined;
+        const suffix = documentType ? `_${documentType.replace(/\s+/g, '_')}` : '';
+        const fileName = `${data.processNumber}${suffix}.pdf`;
+        this.progress.notAvailableCount++;
+        this.progress.files.push({
+          name: fileName, size: 0, status: 'not_available',
+          documentType, error: data.message,
+        });
         onProgress({ ...this.progress });
       });
 
@@ -264,9 +301,11 @@ export class DownloadManager {
         try {
           const data = JSON.parse(e.data);
           this.progress.failedCount++;
+          const documentType = data.documentType ?? undefined;
+          const suffix = documentType ? `_${documentType.replace(/\s+/g, '_')}` : '';
           this.progress.files.push({
-            name: `${data.processNumber}.pdf`,
-            size: 0, status: 'error', error: data.message,
+            name: `${data.processNumber}${suffix}.pdf`,
+            size: 0, status: 'error', documentType, error: data.message,
           });
           onProgress({ ...this.progress });
         } catch {
@@ -280,13 +319,13 @@ export class DownloadManager {
       es.addEventListener('done', (e: any) => {
         const data = JSON.parse(e.data);
         this.progress.phase = 'collecting';
-        this.progress.message = `Servidor concluiu: ${data.success} ok, ${data.failed} erros. Aguardando downloads finalizarem...`;
+        const notAvLabel = data.notAvailable > 0 ? `, ${data.notAvailable} não disp.` : '';
+        this.progress.message = `Servidor concluiu: ${data.success} ok, ${data.failed} erros${notAvLabel}. Aguardando downloads finalizarem...`;
         onProgress({ ...this.progress });
         es.close();
 
-        sseFinished = true;
         Promise.allSettled(pendingDownloads).then(() => {
-          this.progress.message = `Downloads concluídos: ${this.progress.successCount} ok, ${this.progress.failedCount} erros`;
+          this.progress.message = `Downloads finalizados: ${this.progress.successCount} ok, ${this.progress.failedCount} erros`;
           onProgress({ ...this.progress });
           resolve();
         });
@@ -319,19 +358,33 @@ export class DownloadManager {
       ``,
       `Data: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
       `Pasta: ${folderName}`,
-      `Modo: ${params.mode === 'by_task' ? 'Por Tarefa' : params.mode === 'by_tag' ? 'Por Etiqueta' : 'Por Número'}`,
+      `Modo: ${
+        params.mode === 'by_task' ? 'Por Tarefa'
+        : params.mode === 'by_tag' ? 'Por Etiqueta'
+        : 'Por Número (lista CNJ)'
+      }`,
     ];
 
     if (params.taskName) lines.push(`Tarefa: ${params.taskName}`);
     if (params.tagName) lines.push(`Etiqueta: ${params.tagName}`);
+    if (params.processNumbers?.length) {
+      lines.push(`Lista de processos: ${params.processNumbers.length} número(s)`);
+    }
+    if (params.documentTypes?.length) {
+      lines.push(`Tipos de documento: ${params.documentTypes.join(', ')}`);
+    } else {
+      lines.push(`Tipos de documento: TODOS (sem filtro)`);
+    }
 
     lines.push(
       ``,
       `RESULTADO:`,
-      `  Total de processos: ${this.progress.totalProcesses}`,
-      `  Downloads OK:       ${this.progress.successCount}`,
-      `  Falhas:             ${this.progress.failedCount}`,
-      `  Bytes baixados:     ${formatBytes(this.progress.bytesDownloaded)}`,
+      `  Total de processos:    ${this.progress.totalProcesses}`,
+      `  Total de requisições:  ${this.progress.totalRequests}`,
+      `  Downloads OK:          ${this.progress.successCount}`,
+      `  Falhas:                ${this.progress.failedCount}`,
+      `  Tipos não disponíveis: ${this.progress.notAvailableCount}`,
+      `  Bytes baixados:        ${formatBytes(this.progress.bytesDownloaded)}`,
       ``,
     );
 
@@ -341,11 +394,21 @@ export class DownloadManager {
       for (const f of errors) {
         lines.push(`  ✗ ${f.name}: ${f.error}`);
       }
+      lines.push('');
+    }
+
+    const notAvail = this.progress.files.filter(f => f.status === 'not_available');
+    if (notAvail.length > 0) {
+      lines.push(`TIPOS NÃO DISPONÍVEIS (${notAvail.length}):`);
+      for (const f of notAvail) {
+        lines.push(`  - ${f.name}: ${f.error}`);
+      }
+      lines.push('');
     }
 
     const ok = this.progress.files.filter(f => f.status === 'ok');
     if (ok.length > 0) {
-      lines.push(``, `ARQUIVOS BAIXADOS (${ok.length}):`);
+      lines.push(`ARQUIVOS BAIXADOS (${ok.length}):`);
       for (const f of ok) {
         lines.push(`  ✓ ${f.name} (${formatBytes(f.size)})`);
       }
@@ -357,9 +420,19 @@ export class DownloadManager {
 
   private initialProgress(): DownloadProgress {
     return {
-      phase: 'initializing', totalProcesses: 0, currentIndex: 0,
-      currentProcess: '', successCount: 0, failedCount: 0,
-      queuedCount: 0, bytesDownloaded: 0, message: '', files: [],
+      phase: 'initializing',
+      totalProcesses: 0,
+      totalRequests: 0,
+      currentIndex: 0,
+      currentProcess: '',
+      successCount: 0,
+      failedCount: 0,
+      queuedCount: 0,
+      notAvailableCount: 0,
+      bytesDownloaded: 0,
+      message: '',
+      files: [],
+      documentTypes: [],
     };
   }
 }

@@ -4,6 +4,8 @@ export interface PJELoginResult {
   user?: PJEUserInfo;
   profiles?: PJEProfile[];
   error?: string;
+
+  twoFactorType?: 'totp' | 'email';
 }
 
 export interface PJEUserInfo {

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
@@ -17,14 +16,14 @@ import { ExecutionStatus } from '../../componentes/pje-download/ExecutionStatus'
 import { ProfileBadge } from '../../componentes/pje-download/ProfileBadge';
 import { ListaTarefas } from '../../componentes/pje-download/ListaTarefas';
 import { ListaEtiquetas } from '../../componentes/pje-download/ListaEtiquetas';
+import { ListaProcessos, normalizarCNJ } from '../../componentes/pje-download/ListaProcessos';
+import { SeletorTipoDocumento } from '../../componentes/pje-download/SeletorTipoDocumento';
 import { ProgressoJob } from '../../componentes/pje-download/ProgressoJob';
 import { ResultadoFinal } from '../../componentes/pje-download/ResultadoFinal';
 import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogados';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
-import {
-  loginPJE, enviar2FA, selecionarPerfil,
-} from '../../componentes/pje-download/api';
+import { loginPJE, enviar2FA, selecionarPerfil } from '../../componentes/pje-download/api';
 import {
   gerarPlanilhaAdvogados, obterProgressoAdvogados,
   cancelarPlanilhaAdvogados, downloadPlanilha,
@@ -87,7 +86,10 @@ interface ResultadoFinalState {
   status: 'success' | 'partial' | 'failed' | 'cancelled';
   titulo: string;
   mensagem: string;
-  resumo?: { total: number; sucesso: number; falhas: number; bytesTotal?: number };
+  resumo?: {
+    total: number; sucesso: number; falhas: number;
+    notAvailable?: number; bytesTotal?: number;
+  };
   tipoServico: 'processos' | 'advogados';
   advogadosJobId?: string;
 }
@@ -105,6 +107,9 @@ export default function PaginaDownloadPJE() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [etiquetaSelecionada, setEtiquetaSelecionada] = useState<number | null>(null);
 
+  const [numerosProcessoRaw, setNumerosProcessoRaw] = useState('');
+  const [tiposSelecionados, setTiposSelecionados] = useState<string[]>([]);
+
   const [execucao, setExecucao] = useState<EstadoExecucao>(ESTADO_EXECUCAO_INICIAL);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const managerRef = useRef<DownloadManager | null>(null);
@@ -116,12 +121,20 @@ export default function PaginaDownloadPJE() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [filtrosAdv, setFiltrosAdv] = useState<FiltroAdvogado[]>([]);
-
   const [resultado, setResultado] = useState<ResultadoFinalState | null>(null);
 
   const { addLog } = useUiLogs();
 
   const fsApiSupported = typeof window !== 'undefined' && FileSystemManager?.isSupported?.();
+
+  const numerosValidados = useMemo(() => {
+    return numerosProcessoRaw
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => normalizarCNJ(s))
+      .filter((n): n is string => Boolean(n));
+  }, [numerosProcessoRaw]);
 
   const totalProcessosTarefa = useMemo(() => {
     const lista = isFavorite ? (sessao.tarefasFavoritas || []) : (sessao.tarefas || []);
@@ -151,6 +164,8 @@ export default function PaginaDownloadPJE() {
     setTarefaSelecionada('');
     setIsFavorite(false);
     setEtiquetaSelecionada(null);
+    setNumerosProcessoRaw('');
+    setTiposSelecionados([]);
     setExecucao(ESTADO_EXECUCAO_INICIAL);
     setDownloadProgress(null);
     setJobAdvogados(null);
@@ -192,13 +207,22 @@ export default function PaginaDownloadPJE() {
     try {
       const result = await loginPJE({ cpf, password: senha });
       if (result.needs2FA) {
-        addLog('warn', 'AUTH', '2FA necessário');
+        addLog('warn', 'AUTH', `2FA necessário (tipo: ${result.twoFactorType ?? 'email'})`);
         setCredenciais({ cpf, password: senha });
-        setSessao((prev) => ({ ...prev, sessionId: result.sessionId }));
+        setSessao((prev) => ({
+          ...prev,
+          sessionId: result.sessionId,
+          twoFactorType: result.twoFactorType,
+        }));
         setEtapa('2fa');
       } else if (result.user) {
         addLog('success', 'AUTH', `Login OK — ${result.user.nomeUsuario}`);
-        setSessao({ autenticado: true, sessionId: result.sessionId, usuario: result.user, perfis: result.profiles || [] });
+        setSessao({
+          autenticado: true,
+          sessionId: result.sessionId,
+          usuario: result.user,
+          perfis: result.profiles || [],
+        });
         setCredenciais({ cpf, password: senha });
         setEtapa(result.profiles?.length ? 'perfil' : 'download');
       } else {
@@ -217,9 +241,25 @@ export default function PaginaDownloadPJE() {
     try {
       const sid = sessao.sessionId || 'unknown';
       const result = await enviar2FA(sid, codigo);
+
+      if (result.needs2FA && result.error) {
+        addLog('warn', '2FA', `Código rejeitado: ${result.error}`);
+        setSessao((prev) => ({
+          ...prev,
+          sessionId: result.sessionId ?? prev.sessionId,
+        }));
+        setErro(result.error);
+        return;
+      }
+
       if (result.user) {
         addLog('success', '2FA', `Verificado — ${result.user.nomeUsuario}`);
-        setSessao({ autenticado: true, sessionId: result.sessionId || sid, usuario: result.user, perfis: result.profiles || [] });
+        setSessao({
+          autenticado: true,
+          sessionId: result.sessionId || sid,
+          usuario: result.user,
+          perfis: result.profiles || [],
+        });
         setEtapa(result.profiles?.length ? 'perfil' : 'download');
       } else if (result.needs2FA) {
         setErro('Código inválido ou expirado.');
@@ -263,7 +303,12 @@ export default function PaginaDownloadPJE() {
     setErro(null);
     setDownloadProgress(null);
     setResultado(null);
-    setExecucao({ ...ESTADO_EXECUCAO_INICIAL, isDownloading: true, downloadStatus: 'listing', downloadMessage: 'Iniciando download...' });
+    setExecucao({
+      ...ESTADO_EXECUCAO_INICIAL,
+      isDownloading: true,
+      downloadStatus: 'listing',
+      downloadMessage: 'Iniciando download...',
+    });
 
     const manager = new DownloadManager();
     managerRef.current = manager;
@@ -272,6 +317,7 @@ export default function PaginaDownloadPJE() {
       apiBase: API_BASE,
       sessionId: sessao.sessionId || '',
       mode: modo,
+      documentTypes: tiposSelecionados.length > 0 ? tiposSelecionados : undefined,
     };
 
     if (modo === 'by_task') {
@@ -281,6 +327,8 @@ export default function PaginaDownloadPJE() {
       params.tagId = etiquetaSelecionada!;
       const etq = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada);
       params.tagName = etq?.nomeTag;
+    } else if (modo === 'by_number') {
+      params.processNumbers = numerosValidados;
     }
 
     let finalProgress: DownloadProgress | null = null;
@@ -289,23 +337,31 @@ export default function PaginaDownloadPJE() {
       await manager.execute(params, (p) => {
         finalProgress = { ...p };
         setDownloadProgress(finalProgress);
+        const total = p.totalRequests || p.totalProcesses;
         setExecucao({
           isDownloading: !['done', 'error', 'cancelled'].includes(p.phase),
-          downloadProgress: p.totalProcesses > 0
-            ? Math.round(((p.successCount + p.failedCount) / p.totalProcesses) * 100)
+          downloadProgress: total > 0
+            ? Math.round(((p.successCount + p.failedCount + p.notAvailableCount) / total) * 100)
             : 0,
           currentProcess: p.currentProcess || '',
           totalProcesses: p.totalProcesses,
           completedProcesses: p.successCount,
           failedProcesses: p.failedCount,
-          downloadStatus: p.phase === 'done' ? 'completed' : p.phase === 'error' ? 'failed' : p.phase === 'cancelled' ? 'cancelled' : 'downloading',
+          notAvailableCount: p.notAvailableCount,
+          downloadStatus: p.phase === 'done' ? 'completed'
+            : p.phase === 'error' ? 'failed'
+            : p.phase === 'cancelled' ? 'cancelled'
+            : 'downloading',
           downloadMessage: p.message,
           bytesDownloaded: p.bytesDownloaded,
         });
       });
     } catch (err: any) {
       setErro(err.message || 'Erro inesperado');
-      setExecucao((prev) => ({ ...prev, isDownloading: false, downloadStatus: 'failed', downloadMessage: err.message || 'Erro' }));
+      setExecucao((prev) => ({
+        ...prev, isDownloading: false,
+        downloadStatus: 'failed', downloadMessage: err.message || 'Erro',
+      }));
     }
 
     if (finalProgress) {
@@ -329,15 +385,20 @@ export default function PaginaDownloadPJE() {
         titulo: tituloMap[st],
         mensagem: fp.message,
         resumo: {
-          total: fp.totalProcesses,
+          total: fp.totalRequests || fp.totalProcesses,
           sucesso: fp.successCount,
           falhas: fp.failedCount,
+          notAvailable: fp.notAvailableCount,
           bytesTotal: fp.bytesDownloaded,
         },
         tipoServico: 'processos',
       });
     }
-  }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao]);
+  }, [
+    modo, tarefaSelecionada, isFavorite,
+    etiquetaSelecionada, sessao,
+    numerosValidados, tiposSelecionados,
+  ]);
 
   const handleCancelarDownload = useCallback(() => {
     managerRef.current?.cancel();
@@ -348,7 +409,11 @@ export default function PaginaDownloadPJE() {
     pollRef.current = setInterval(async () => {
       try {
         const p = await obterProgressoAdvogados(jobId);
-        setJobAdvogados({ jobId, status: p.status, progress: p.progress, message: p.message, totalProcesses: p.totalProcesses, processedCount: p.processedCount });
+        setJobAdvogados({
+          jobId, status: p.status, progress: p.progress,
+          message: p.message, totalProcesses: p.totalProcesses,
+          processedCount: p.processedCount,
+        });
         if (['completed', 'failed', 'cancelled'].includes(p.status)) {
           stopPolling();
           setCarregando(false);
@@ -360,18 +425,19 @@ export default function PaginaDownloadPJE() {
           };
           setResultado({
             status: statusMap[p.status] || 'failed',
-            titulo: p.status === 'completed' ? 'Planilha gerada com sucesso!' : p.status === 'cancelled' ? 'Geração cancelada' : 'Falha na geração',
+            titulo: p.status === 'completed' ? 'Planilha gerada com sucesso!'
+              : p.status === 'cancelled' ? 'Geração cancelada'
+              : 'Falha na geração',
             mensagem: p.message,
             resumo: {
-              total: p.totalProcesses,
-              sucesso: p.processedCount,
+              total: p.totalProcesses, sucesso: p.processedCount,
               falhas: p.totalProcesses - p.processedCount,
             },
             tipoServico: 'advogados',
             advogadosJobId: p.status === 'completed' ? jobId : undefined,
           });
         }
-      } catch { /* silent */ }
+      } catch {  }
     }, 2500);
   }, [stopPolling]);
 
@@ -396,19 +462,24 @@ export default function PaginaDownloadPJE() {
       params.tagName = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada)?.nomeTag;
     }
 
-    if (filtrosAdv.length > 0) {
-      params.filtros = filtrosAdv;
-    }
+    if (filtrosAdv.length > 0) params.filtros = filtrosAdv;
 
     try {
       const result = await gerarPlanilhaAdvogados(params);
-      setJobAdvogados({ jobId: result.jobId, status: 'listing', progress: 0, message: 'Iniciando...', totalProcesses: 0, processedCount: 0 });
+      setJobAdvogados({
+        jobId: result.jobId, status: 'listing', progress: 0,
+        message: 'Iniciando...', totalProcesses: 0, processedCount: 0,
+      });
       startPolling(result.jobId);
     } catch (err: any) {
       setErro(err.message || 'Erro ao iniciar geração');
       setCarregando(false);
     }
-  }, [credenciais, modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, filtrosAdv, startPolling]);
+  }, [
+    credenciais, modo, tarefaSelecionada,
+    isFavorite, etiquetaSelecionada, sessao,
+    filtrosAdv, startPolling,
+  ]);
 
   const handleCancelarAdvogados = useCallback(async () => {
     if (!jobAdvogados) return;
@@ -423,19 +494,20 @@ export default function PaginaDownloadPJE() {
         mensagem: 'A geração da planilha foi cancelada pelo usuário.',
         tipoServico: 'advogados',
       });
-    } catch { /* silent */ }
+    } catch {  }
   }, [jobAdvogados, stopPolling]);
 
   const handleSubmit = useCallback(() => {
-    if (servicoAtivo === 'processos') {
-      handleDownloadProcessos();
-    } else if (servicoAtivo === 'advogados') {
-      handleGerarPlanilha();
-    }
+    if (servicoAtivo === 'processos') handleDownloadProcessos();
+    else if (servicoAtivo === 'advogados') handleGerarPlanilha();
   }, [servicoAtivo, handleDownloadProcessos, handleGerarPlanilha]);
 
   const mostrandoDownload = etapa === 'download' && sessao.perfilSelecionado;
   const mostrandoResultado = resultado !== null;
+
+  const modosSuportados: PJEDownloadMode[] = servicoAtivo === 'advogados'
+    ? ['by_task', 'by_tag']
+    : ['by_task', 'by_tag', 'by_number'];
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -459,8 +531,7 @@ export default function PaginaDownloadPJE() {
                   onClick={handleMudarPerfil}
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 transition-colors"
                 >
-                  <UserCog size={14} />
-                  Mudar Perfil
+                  <UserCog size={14} /> Mudar Perfil
                 </button>
               )}
               <button
@@ -470,8 +541,7 @@ export default function PaginaDownloadPJE() {
                 className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-500 disabled:hover:bg-transparent disabled:hover:border-slate-200"
                 title={isAnyTaskActive ? 'Aguarde a conclusão da tarefa em andamento' : 'Sair do PJE'}
               >
-                <LogOut size={14} />
-                Sair
+                <LogOut size={14} /> Sair
               </button>
             </div>
           )}
@@ -484,6 +554,7 @@ export default function PaginaDownloadPJE() {
                 carregando={carregando}
                 erro={erro}
                 aguardando2FA={etapa === '2fa'}
+                twoFactorType={sessao.twoFactorType}
                 onLogin={handleLogin}
                 onEnviar2FA={handleEnviar2FA}
               />
@@ -543,10 +614,18 @@ export default function PaginaDownloadPJE() {
                             {f.status === 'ok' && <CheckCircle size={10} className="text-emerald-500" />}
                             {f.status === 'downloading' && <Loader2 size={10} className="text-blue-500 animate-spin" />}
                             {f.status === 'error' && <X size={10} className="text-red-500" />}
-                            <span className={`truncate ${f.status === 'error' ? 'text-red-600' : 'text-slate-600'}`}>
+                            {f.status === 'not_available' && <AlertCircle size={10} className="text-amber-500" />}
+                            <span className={`truncate ${
+                              f.status === 'error' ? 'text-red-600'
+                              : f.status === 'not_available' ? 'text-amber-600'
+                              : 'text-slate-600'
+                            }`}>
                               {f.name}
                             </span>
                             {f.size > 0 && <span className="text-slate-400 flex-shrink-0">{formatBytes(f.size)}</span>}
+                            {f.status === 'not_available' && (
+                              <span className="text-amber-500 text-[10px] flex-shrink-0">não disp.</span>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -577,6 +656,12 @@ export default function PaginaDownloadPJE() {
                           setErro(null);
                           setTarefaSelecionada('');
                           setEtiquetaSelecionada(null);
+                          setNumerosProcessoRaw('');
+                          setTiposSelecionados([]);
+
+                          if (s === 'advogados' && modo === 'by_number') {
+                            setModo('by_task');
+                          }
                           setFiltrosAdv([]);
                         }}
                       />
@@ -587,11 +672,15 @@ export default function PaginaDownloadPJE() {
                         <DownloadModeSelector
                           modoSelecionado={modo}
                           onSelecionar={(m) => {
+
+                            if (servicoAtivo === 'advogados' && m === 'by_number') return;
                             setModo(m);
                             setTarefaSelecionada('');
                             setEtiquetaSelecionada(null);
+                            setNumerosProcessoRaw('');
                           }}
                           desabilitado={!servicoAtivo}
+                          modosSuportados={modosSuportados}
                         />
                       </div>
                     )}
@@ -599,7 +688,9 @@ export default function PaginaDownloadPJE() {
                     {servicoAtivo && (
                       <div className="mb-4">
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
-                          3. {modo === 'by_task' ? 'Selecione a tarefa' : 'Selecione a etiqueta'}
+                          3. {modo === 'by_task' ? 'Selecione a tarefa'
+                            : modo === 'by_tag' ? 'Selecione a etiqueta'
+                            : 'Cole a lista de processos'}
                         </label>
 
                         {modo === 'by_task' && (
@@ -631,6 +722,26 @@ export default function PaginaDownloadPJE() {
                             onSelecionar={setEtiquetaSelecionada}
                           />
                         )}
+
+                        {modo === 'by_number' && (
+                          <ListaProcessos
+                            valor={numerosProcessoRaw}
+                            onChange={setNumerosProcessoRaw}
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {}
+                    {servicoAtivo === 'processos' && (
+                      <div className="mb-6">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">
+                          4. Tipos de documento
+                        </label>
+                        <SeletorTipoDocumento
+                          selecionados={tiposSelecionados}
+                          onChange={setTiposSelecionados}
+                        />
                       </div>
                     )}
 
@@ -653,7 +764,8 @@ export default function PaginaDownloadPJE() {
                       modo={modo}
                       tarefaSelecionada={tarefaSelecionada}
                       etiquetaSelecionada={etiquetaSelecionada}
-                      numerosProcesso={[]}
+                      numerosProcesso={numerosValidados}
+                      tiposSelecionados={tiposSelecionados}
                       carregando={carregando}
                       fsApiSupported={fsApiSupported}
                       totalProcessos={totalProcessosTarefa}

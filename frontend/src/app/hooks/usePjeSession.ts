@@ -15,7 +15,7 @@ function isSessionExpiredError(err: unknown): boolean {
 
 function extrairMensagemErro(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 0) return 'Servidor indisponivel.';
+    if (err.status === 0) return 'Servidor indisponível.';
     return err.message;
   }
   if (err instanceof Error) return err.message;
@@ -30,50 +30,110 @@ export function usePjeSession() {
   const [erro, setErro] = useState<string | null>(null);
 
   const logout = useCallback(() => {
-    setSessao({ autenticado: false }); setCredenciais(null); setEtapa('login'); setErro(null);
+    setSessao({ autenticado: false });
+    setCredenciais(null);
+    setEtapa('login');
+    setErro(null);
   }, []);
 
   const login = useCallback(async (cpf: string, senha: string) => {
-    setCarregando(true); setErro(null);
+    setCarregando(true);
+    setErro(null);
     try {
       const result = await loginPJE({ cpf, password: senha });
       if (result.needs2FA) {
-        setCredenciais({ cpf, password: senha }); setSessao((prev) => ({ ...prev, sessionId: result.sessionId })); setEtapa('2fa');
+        setCredenciais({ cpf, password: senha });
+        setSessao((prev) => ({
+          ...prev,
+          sessionId: result.sessionId,
+          twoFactorType: result.twoFactorType,
+        }));
+        setEtapa('2fa');
       } else if (result.user) {
-        setSessao({ autenticado: true, sessionId: result.sessionId, usuario: result.user, perfis: result.profiles || [] });
-        setCredenciais({ cpf, password: senha }); setEtapa(result.profiles?.length ? 'perfil' : 'download');
-      } else { setErro('Falha na autenticacao.'); }
-    } catch (err: any) { setErro(extrairMensagemErro(err)); }
-    finally { setCarregando(false); }
+        setSessao({
+          autenticado: true,
+          sessionId: result.sessionId,
+          usuario: result.user,
+          perfis: result.profiles || [],
+        });
+        setCredenciais({ cpf, password: senha });
+        setEtapa(result.profiles?.length ? 'perfil' : 'download');
+      } else {
+        setErro('Falha na autenticação.');
+      }
+    } catch (err: any) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setCarregando(false);
+    }
   }, []);
 
   const enviar2FACode = useCallback(async (codigo: string) => {
-    setCarregando(true); setErro(null);
+    setCarregando(true);
+    setErro(null);
     try {
       const sid = sessao.sessionId || 'unknown';
       const result = await enviar2FA(sid, codigo);
+
+      if (result.needs2FA && result.error) {
+        setSessao((prev) => ({
+          ...prev,
+          sessionId: result.sessionId ?? prev.sessionId,
+        }));
+        setErro(result.error);
+        return;
+      }
+
       if (result.user) {
-        setSessao({ autenticado: true, sessionId: result.sessionId || sid, usuario: result.user, perfis: result.profiles || [] });
+        setSessao({
+          autenticado: true,
+          sessionId: result.sessionId || sid,
+          usuario: result.user,
+          perfis: result.profiles || [],
+        });
         setEtapa(result.profiles?.length ? 'perfil' : 'download');
-      } else { setErro('Codigo invalido ou expirado.'); }
-    } catch (err: any) { setErro(extrairMensagemErro(err)); }
-    finally { setCarregando(false); }
+      } else if (result.needs2FA) {
+        setErro('Código inválido ou expirado. Tente novamente.');
+      } else {
+        setErro('Resposta inesperada.');
+      }
+    } catch (err: any) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setCarregando(false);
+    }
   }, [sessao.sessionId]);
 
   const selecionarPerfilPje = useCallback(async (perfil: PerfilPJE) => {
-    setCarregando(true); setErro(null);
+    setCarregando(true);
+    setErro(null);
     try {
-      const sid = sessao.sessionId; if (!sid) { logout(); return; }
+      const sid = sessao.sessionId;
+      if (!sid) { logout(); return; }
       const result = await selecionarPerfil(sid, perfil.indice);
       if (result.tasks) {
-        setSessao((prev) => ({ ...prev, perfilSelecionado: perfil, tarefas: result.tasks, tarefasFavoritas: result.favoriteTasks, etiquetas: result.tags }));
+        setSessao((prev) => ({
+          ...prev,
+          perfilSelecionado: perfil,
+          tarefas: result.tasks,
+          tarefasFavoritas: result.favoriteTasks,
+          etiquetas: result.tags,
+        }));
         setEtapa('download');
-      } else { setErro('Falha ao selecionar perfil.'); }
+      } else {
+        setErro('Falha ao selecionar perfil.');
+      }
     } catch (err: any) {
       if (isSessionExpiredError(err)) { logout(); return; }
       setErro(extrairMensagemErro(err));
-    } finally { setCarregando(false); }
+    } finally {
+      setCarregando(false);
+    }
   }, [sessao.sessionId, logout]);
 
-  return { etapa, setEtapa, sessao, credenciais, carregando, erro, setErro, login, enviar2FACode, selecionarPerfilPje, logout };
+  return {
+    etapa, setEtapa, sessao, credenciais,
+    carregando, erro, setErro,
+    login, enviar2FACode, selecionarPerfilPje, logout,
+  };
 }

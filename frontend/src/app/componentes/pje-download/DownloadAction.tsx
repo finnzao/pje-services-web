@@ -9,14 +9,16 @@ interface DownloadActionProps {
   modo: PJEDownloadMode;
   tarefaSelecionada: string;
   etiquetaSelecionada: number | null;
+
   numerosProcesso: string[];
+
+  tiposSelecionados?: string[];
   carregando: boolean;
   fsApiSupported?: boolean;
   totalProcessos?: number;
   onClick: () => void;
 }
 
-// Valida se todas as etapas foram preenchidas e retorna mensagem de orientação
 function validarFluxo(
   servico: ServicoAtivo | null,
   modo: PJEDownloadMode,
@@ -33,20 +35,18 @@ function validarFluxo(
   if (modo === 'by_tag' && !etiquetaSelecionada) {
     return { valido: false, mensagem: 'Selecione uma etiqueta para continuar' };
   }
-
+  if (modo === 'by_number' && numerosProcesso.length === 0) {
+    return { valido: false, mensagem: 'Cole ao menos um número CNJ válido' };
+  }
   return { valido: true, mensagem: '' };
 }
 
 export function DownloadAction({
-  servico,
-  modo,
-  tarefaSelecionada,
-  etiquetaSelecionada,
-  numerosProcesso,
-  carregando,
-  fsApiSupported = false,
-  totalProcessos = 0,
-  onClick,
+  servico, modo,
+  tarefaSelecionada, etiquetaSelecionada,
+  numerosProcesso, tiposSelecionados = [],
+  carregando, fsApiSupported = false,
+  totalProcessos = 0, onClick,
 }: DownloadActionProps) {
   const { valido, mensagem } = validarFluxo(
     servico, modo, tarefaSelecionada, etiquetaSelecionada, numerosProcesso,
@@ -54,19 +54,27 @@ export function DownloadAction({
 
   const habilitado = valido && !carregando;
   const isAdvogados = servico === 'advogados';
+  const tiposLimpos = tiposSelecionados.filter((s) => s && s !== 'Selecione');
+  const numTipos = tiposLimpos.length;
 
-  // Label dinâmico do botão
   const obterLabel = (): string => {
     if (carregando) return 'Processando...';
     if (!valido) return isAdvogados ? 'Gerar Planilha' : 'Baixar Processos';
 
     if (isAdvogados) return 'Gerar Planilha de Advogados';
 
+    const tipoSuffix = numTipos > 0
+      ? ` × ${numTipos} tipo(s)`
+      : '';
+
     if (modo === 'by_task' && tarefaSelecionada) {
-      return `Baixar ${totalProcessos} processo(s) de "${tarefaSelecionada}"`;
+      return `Baixar ${totalProcessos} processo(s)${tipoSuffix}`;
     }
     if (modo === 'by_tag' && etiquetaSelecionada) {
-      return 'Baixar processos da etiqueta';
+      return `Baixar processos da etiqueta${tipoSuffix}`;
+    }
+    if (modo === 'by_number' && numerosProcesso.length > 0) {
+      return `Baixar ${numerosProcesso.length} processo(s) da lista${tipoSuffix}`;
     }
     return fsApiSupported ? 'Escolher pasta e baixar' : 'Baixar como ZIP';
   };
@@ -87,15 +95,12 @@ export function DownloadAction({
             : 'bg-slate-200 text-slate-400 cursor-not-allowed'
         }`}
       >
-        {carregando ? (
-          <Loader2 size={16} className="animate-spin" />
-        ) : (
-          <IconeBotao size={16} />
-        )}
+        {carregando
+          ? <Loader2 size={16} className="animate-spin" />
+          : <IconeBotao size={16} />}
         {obterLabel()}
       </button>
 
-      {/* Mensagem de orientação quando botão desabilitado */}
       {!valido && !carregando && (
         <div className="flex items-center justify-center gap-1.5 mt-2">
           <AlertCircle size={12} className="text-slate-400" />
