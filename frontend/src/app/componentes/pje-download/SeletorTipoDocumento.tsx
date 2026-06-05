@@ -5,7 +5,6 @@ import { FileText, X, ChevronDown, ChevronUp, Info, Check } from 'lucide-react';
 import { listDocumentTypes, SELECIONE_SENTINEL } from './tipos-documento';
 
 interface SeletorTipoDocumentoProps {
-
   selecionados: string[];
   onChange: (selecionados: string[]) => void;
   desabilitado?: boolean;
@@ -31,135 +30,78 @@ export function SeletorTipoDocumento({ selecionados, onChange, desabilitado }: S
 
   const alternarTipo = (nome: string) => {
     if (desabilitado) return;
-    if (selecionadosLimpos.includes(nome)) {
-      onChange(selecionadosLimpos.filter((s) => s !== nome));
-    } else {
-      onChange([...selecionadosLimpos, nome]);
-    }
-  };
-
-  const removerTodos = () => {
-    if (desabilitado) return;
-    onChange([]);
+    if (selecionadosLimpos.includes(nome)) onChange(selecionadosLimpos.filter((s) => s !== nome));
+    else onChange([...selecionadosLimpos, nome]);
   };
 
   return (
-    <div className={desabilitado ? 'opacity-50 pointer-events-none' : ''}>
-      <div className="flex items-center gap-2 mb-2">
+    <div className={desabilitado ? 'pointer-events-none opacity-50' : ''}>
+      <div className="mb-2 flex items-center gap-2">
         <FileText size={14} className="text-slate-500" />
-        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-          Tipos de documento (opcional)
-        </label>
+        <span className="eyebrow">Tipos de documento (opcional)</span>
       </div>
 
-      {}
-      <div
-        className={`mb-3 p-2.5 flex items-start gap-2 text-xs border ${
-          baixaTudo
-            ? 'bg-blue-50 border-blue-200 text-blue-800'
-            : 'bg-amber-50 border-amber-200 text-amber-800'
-        }`}
-      >
-        <Info size={12} className="flex-shrink-0 mt-0.5" />
-        <div>
-          {baixaTudo ? (
-            <span>
-              Sem filtro: <strong>todos os documentos</strong> de cada processo serão baixados.
-            </span>
-          ) : (
-            <span>
-              {selecionadosLimpos.length} tipo(s) selecionado(s). Cada processo gerará{' '}
-              <strong>{selecionadosLimpos.length} arquivo(s)</strong> (uma requisição por tipo).
-            </span>
-          )}
-        </div>
+      <div className={`mb-3 flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-xs ${baixaTudo ? 'bg-navy-50 text-navy-700' : 'bg-brass-50 text-brass-600'}`}>
+        <Info size={13} className="mt-0.5 flex-shrink-0" />
+        <span>
+          {baixaTudo
+            ? <>Sem filtro: <strong>todos os documentos</strong> de cada processo serão baixados.</>
+            : <>{selecionadosLimpos.length} tipo(s): cada processo gerará <strong>{selecionadosLimpos.length} arquivo(s)</strong>.</>}
+        </span>
       </div>
 
-      {}
       {selecionadosLimpos.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
+        <div className="mb-2.5 flex flex-wrap gap-1.5">
           {selecionadosLimpos.map((nome) => (
-            <span
-              key={nome}
-              className="inline-flex items-center gap-1 px-2 py-1 bg-slate-900 text-white text-xs font-medium"
-            >
+            <span key={nome} className="chip bg-navy-800 text-white">
               {nome}
-              <button
-                type="button"
-                onClick={() => alternarTipo(nome)}
-                className="hover:bg-slate-700 -mr-1 ml-1 p-0.5"
-                aria-label={`Remover ${nome}`}
-              >
+              <button type="button" onClick={() => alternarTipo(nome)} className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-white/20" aria-label={`Remover ${nome}`}>
                 <X size={10} />
               </button>
             </span>
           ))}
-          <button
-            type="button"
-            onClick={removerTodos}
-            className="px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-          >
-            Limpar
-          </button>
+          <button type="button" onClick={() => onChange([])} className="rounded-full px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50">Limpar</button>
         </div>
       )}
 
-      {}
       <button
         type="button"
         onClick={() => setAberto(!aberto)}
-        className="w-full flex items-center justify-between px-3 py-2 border-2 border-slate-200 text-sm hover:border-slate-300 bg-white"
+        className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-500 transition-colors hover:border-slate-300"
       >
-        <span className="text-slate-500">
-          {aberto ? 'Fechar lista' : `Adicionar tipos de documento (${todosOsTipos.length} disponíveis)`}
-        </span>
-        {aberto ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        <span>{aberto ? 'Fechar lista' : `Adicionar tipos (${todosOsTipos.length} disponíveis)`}</span>
+        {aberto ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>
 
       {aberto && (
-        <div className="mt-2 border-2 border-slate-200 bg-white">
-          <div className="p-2 border-b border-slate-100">
+        <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white animate-fade">
+          <div className="border-b border-slate-100 p-2">
             <input
-              type="text"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar tipo..."
-              className="w-full px-2 py-1.5 border border-slate-200 text-sm focus:border-slate-400 focus:outline-none"
-              autoFocus
+              type="text" value={busca} onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar tipo…" autoFocus
+              className="field py-2 text-sm"
             />
           </div>
-          <div className="max-h-64 overflow-y-auto">
+          <div className="scroll-area max-h-64 overflow-y-auto">
             {tiposFiltrados.length === 0 ? (
-              <p className="p-3 text-xs text-slate-400 text-center">Nenhum tipo encontrado.</p>
-            ) : (
-              tiposFiltrados.map((tipo) => {
-                const ativo = selecionadosLimpos.includes(tipo.nome);
-                return (
-                  <button
-                    key={tipo.nome}
-                    type="button"
-                    onClick={() => alternarTipo(tipo.nome)}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
-                      ativo
-                        ? 'bg-slate-900 text-white'
-                        : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 border-2 flex items-center justify-center flex-shrink-0 ${
-                        ativo ? 'border-white' : 'border-slate-300'
-                      }`}
-                    >
-                      {ativo && <Check size={10} />}
-                    </div>
-                    <span className="flex-1 truncate">{tipo.nome}</span>
-                    <span className={`text-[10px] font-mono ${ativo ? 'text-slate-300' : 'text-slate-400'}`}>
-                      #{tipo.ids.join(',')}
-                    </span>
-                  </button>
-                );
-              })
-            )}
+              <p className="p-3 text-center text-xs text-slate-400">Nenhum tipo encontrado.</p>
+            ) : tiposFiltrados.map((tipo) => {
+              const ativo = selecionadosLimpos.includes(tipo.nome);
+              return (
+                <button
+                  key={tipo.nome}
+                  type="button"
+                  onClick={() => alternarTipo(tipo.nome)}
+                  className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${ativo ? 'bg-navy-800 text-white' : 'text-slate-700 hover:bg-slate-50'}`}
+                >
+                  <span className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border-2 ${ativo ? 'border-white' : 'border-slate-300'}`}>
+                    {ativo && <Check size={10} strokeWidth={3} />}
+                  </span>
+                  <span className="flex-1 truncate">{tipo.nome}</span>
+                  <span className={`font-mono text-[10px] ${ativo ? 'text-white/60' : 'text-slate-400'}`}>#{tipo.ids.join(',')}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

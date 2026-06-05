@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Download, FileSpreadsheet, CheckCircle } from 'lucide-react';
+import { Download, FileSpreadsheet, Check } from 'lucide-react';
 import type { ServicoAtivo } from './types';
 
 interface ServicoItem {
@@ -9,29 +9,23 @@ interface ServicoItem {
   icone: React.ReactNode;
   titulo: string;
   descricao: string;
-  cor: string;
-  corAtiva: string;
-  corIcone: string;
+  accent: 'navy' | 'emerald';
 }
 
 const SERVICOS: ServicoItem[] = [
   {
     id: 'processos',
-    icone: <Download size={24} />,
+    icone: <Download size={22} />,
     titulo: 'Download de Processos',
-    descricao: 'Baixar PDFs dos processos disponíveis no PJE',
-    cor: 'border-slate-900 bg-slate-50',
-    corAtiva: 'bg-slate-900 text-white',
-    corIcone: 'text-slate-700',
+    descricao: 'Baixe os PDFs dos processos disponíveis no PJE.',
+    accent: 'navy',
   },
   {
     id: 'advogados',
-    icone: <FileSpreadsheet size={24} />,
+    icone: <FileSpreadsheet size={22} />,
     titulo: 'Planilha de Advogados',
-    descricao: 'Gerar planilha com nomes dos advogados presentes nos processos',
-    cor: 'border-emerald-700 bg-emerald-50',
-    corAtiva: 'bg-emerald-700 text-white',
-    corIcone: 'text-emerald-700',
+    descricao: 'Gere uma planilha com os advogados de cada processo.',
+    accent: 'emerald',
   },
 ];
 
@@ -43,41 +37,38 @@ interface ServiceSelectorProps {
 export function ServiceSelector({ servicoSelecionado, onSelecionar }: ServiceSelectorProps) {
   return (
     <div>
-      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
-        1. Selecione o serviço
-      </label>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {SERVICOS.map((servico) => {
-          const selecionado = servicoSelecionado === servico.id;
+      <div className="mb-3 flex items-center gap-2">
+        <span className="num-badge">1</span>
+        <span className="eyebrow">Selecione o serviço</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {SERVICOS.map((s) => {
+          const on = servicoSelecionado === s.id;
+          const isEmerald = s.accent === 'emerald';
           return (
             <button
-              key={servico.id}
+              key={s.id}
               type="button"
-              onClick={() => onSelecionar(servico.id)}
-              className={`relative p-5 border-2 text-left transition-all group ${
-                selecionado
-                  ? servico.cor
-                  : 'border-slate-200 hover:border-slate-300 bg-white'
-              }`}
+              onClick={() => onSelecionar(s.id)}
+              className={`pick group p-5 ${on ? 'pick-on' : ''}`}
             >
-              {selecionado && (
-                <div className="absolute top-3 right-3">
-                  <CheckCircle size={18} className={servico.id === 'processos' ? 'text-slate-700' : 'text-emerald-700'} />
-                </div>
+              {on && (
+                <span className={`absolute right-3.5 top-3.5 flex h-5 w-5 items-center justify-center rounded-full text-white ${isEmerald ? 'bg-emerald-600' : 'bg-navy-700'}`}>
+                  <Check size={12} strokeWidth={3} />
+                </span>
               )}
-              <div className={`inline-flex p-3 mb-3 transition-colors ${
-                selecionado ? servico.corAtiva : `bg-slate-100 ${servico.corIcone} group-hover:bg-slate-200`
-              }`}>
-                {servico.icone}
-              </div>
-              <h4 className={`text-base font-bold mb-1 ${
-                selecionado ? 'text-slate-900' : 'text-slate-700'
-              }`}>
-                {servico.titulo}
-              </h4>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                {servico.descricao}
-              </p>
+              <span
+                className={`mb-3.5 inline-flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                  on
+                    ? isEmerald ? 'bg-emerald-700 text-white' : 'bg-navy-800 text-white'
+                    : isEmerald ? 'bg-emerald-50 text-emerald-700' : 'bg-navy-50 text-navy-700'
+                }`}
+              >
+                {s.icone}
+              </span>
+              <h4 className="font-display text-base font-semibold text-ink">{s.titulo}</h4>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">{s.descricao}</p>
             </button>
           );
         })}

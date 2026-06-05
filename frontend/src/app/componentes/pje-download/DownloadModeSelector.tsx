@@ -12,18 +12,16 @@ interface ModoItem {
 }
 
 const MODOS: ModoItem[] = [
-  { id: 'by_task',   icone: <ClipboardList size={16} />, rotulo: 'Por Tarefa',   descricao: 'Baixar processos de uma tarefa' },
-  { id: 'by_tag',    icone: <Tag size={16} />,           rotulo: 'Por Etiqueta', descricao: 'Baixar por etiqueta/marcador' },
-  { id: 'by_number', icone: <Hash size={16} />,          rotulo: 'Por Lista',    descricao: 'Colar uma lista de números CNJ' },
+  { id: 'by_task',   icone: <ClipboardList size={16} />, rotulo: 'Por Tarefa',   descricao: 'Processos de uma tarefa' },
+  { id: 'by_tag',    icone: <Tag size={16} />,           rotulo: 'Por Etiqueta', descricao: 'Por etiqueta / marcador' },
+  { id: 'by_number', icone: <Hash size={16} />,          rotulo: 'Por Lista',    descricao: 'Lista de números CNJ' },
 ];
 
 interface DownloadModeSelectorProps {
   modoSelecionado: PJEDownloadMode;
   onSelecionar: (modo: PJEDownloadMode) => void;
   desabilitado?: boolean;
-  /** Quando 'advogados', oculta o modo by_number (não suportado pelo serviço). */
   servico?: 'processos' | 'advogados' | null;
-  /** Lista explícita de modos a exibir. Tem precedência sobre `servico`. */
   modosSuportados?: PJEDownloadMode[];
 }
 
@@ -38,40 +36,28 @@ export function DownloadModeSelector({
       : MODOS;
 
   return (
-    <div className={desabilitado ? 'opacity-50 pointer-events-none' : ''}>
-      <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
-        2. Modo de Download
-      </label>
-      <div className="space-y-2">
+    <div className={desabilitado ? 'pointer-events-none opacity-50' : ''}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="num-badge">2</span>
+        <span className="eyebrow">Modo de download</span>
+      </div>
+
+      <div className="grid gap-2.5 sm:grid-cols-3">
         {modosVisiveis.map((modo) => {
-          const selecionado = modoSelecionado === modo.id;
+          const on = modoSelecionado === modo.id;
           return (
             <button
               key={modo.id}
               type="button"
               onClick={() => onSelecionar(modo.id)}
               disabled={desabilitado}
-              className={`w-full flex items-center gap-3 p-3 border-2 text-left transition-all ${
-                selecionado
-                  ? 'border-slate-900 bg-slate-50'
-                  : 'border-slate-200 hover:border-slate-300 bg-white'
-              }`}
+              className={`pick group p-3.5 ${on ? 'pick-on' : ''}`}
             >
-              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                selecionado ? 'border-slate-900' : 'border-slate-300'
-              }`}>
-                {selecionado && <div className="w-2 h-2 rounded-full bg-slate-900" />}
-              </div>
-
-              <span className={`flex-shrink-0 ${selecionado ? 'text-slate-900' : 'text-slate-400'}`}>
+              <span className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${on ? 'bg-navy-800 text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-navy-50 group-hover:text-navy-600'}`}>
                 {modo.icone}
               </span>
-              <div className="flex-1 min-w-0">
-                <span className={`text-sm font-bold block ${selecionado ? 'text-slate-900' : 'text-slate-600'}`}>
-                  {modo.rotulo}
-                </span>
-                <span className="text-xs text-slate-400">{modo.descricao}</span>
-              </div>
+              <span className="block text-sm font-semibold text-ink">{modo.rotulo}</span>
+              <span className="mt-0.5 block text-xs text-slate-500">{modo.descricao}</span>
             </button>
           );
         })}

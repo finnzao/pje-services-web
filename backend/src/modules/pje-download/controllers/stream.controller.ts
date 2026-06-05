@@ -37,7 +37,10 @@ async function validatePjeSession(session: any): Promise<boolean> {
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('json')) return false;
     const user = await res.json() as any;
-    return !!(user?.idUsuario && user.idUsuario !== 0);
+    if (!user?.idUsuario || user.idUsuario === 0) return false;
+    // Persiste o idUsuario real na sessão: recuperarDownloadsDisponiveis exige idUsuario (não idUsuarioLocalizacao)
+    session.idUsuario = user.idUsuario;
+    return true;
   } catch { return false; }
 }
 

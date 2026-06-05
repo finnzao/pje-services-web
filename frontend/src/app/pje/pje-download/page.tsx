@@ -4,7 +4,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
-  UserCog,
+  UserCog, Landmark,
 } from 'lucide-react';
 
 import { EtapaLogin } from '../../componentes/pje-download/EtapaLogin';
@@ -86,10 +86,7 @@ interface ResultadoFinalState {
   status: 'success' | 'partial' | 'failed' | 'cancelled';
   titulo: string;
   mensagem: string;
-  resumo?: {
-    total: number; sucesso: number; falhas: number;
-    notAvailable?: number; bytesTotal?: number;
-  };
+  resumo?: { total: number; sucesso: number; falhas: number; notAvailable?: number; bytesTotal?: number };
   tipoServico: 'processos' | 'advogados';
   advogadosJobId?: string;
 }
@@ -150,10 +147,7 @@ export default function PaginaDownloadPJE() {
   }, []);
 
   const cancelActiveOperations = useCallback(() => {
-    if (managerRef.current) {
-      managerRef.current.cancel();
-      managerRef.current = null;
-    }
+    if (managerRef.current) { managerRef.current.cancel(); managerRef.current = null; }
     stopPolling();
   }, [stopPolling]);
 
@@ -174,9 +168,7 @@ export default function PaginaDownloadPJE() {
     setFiltrosAdv([]);
   }, [cancelActiveOperations]);
 
-  const handleNovaTarefa = useCallback(() => {
-    resetarFormulario();
-  }, [resetarFormulario]);
+  const handleNovaTarefa = useCallback(() => { resetarFormulario(); }, [resetarFormulario]);
 
   const handleMudarPerfil = useCallback(() => {
     resetarFormulario();
@@ -209,20 +201,11 @@ export default function PaginaDownloadPJE() {
       if (result.needs2FA) {
         addLog('warn', 'AUTH', `2FA necessário (tipo: ${result.twoFactorType ?? 'email'})`);
         setCredenciais({ cpf, password: senha });
-        setSessao((prev) => ({
-          ...prev,
-          sessionId: result.sessionId,
-          twoFactorType: result.twoFactorType,
-        }));
+        setSessao((prev) => ({ ...prev, sessionId: result.sessionId, twoFactorType: result.twoFactorType }));
         setEtapa('2fa');
       } else if (result.user) {
         addLog('success', 'AUTH', `Login OK — ${result.user.nomeUsuario}`);
-        setSessao({
-          autenticado: true,
-          sessionId: result.sessionId,
-          usuario: result.user,
-          perfis: result.profiles || [],
-        });
+        setSessao({ autenticado: true, sessionId: result.sessionId, usuario: result.user, perfis: result.profiles || [] });
         setCredenciais({ cpf, password: senha });
         setEtapa(result.profiles?.length ? 'perfil' : 'download');
       } else {
@@ -244,22 +227,14 @@ export default function PaginaDownloadPJE() {
 
       if (result.needs2FA && result.error) {
         addLog('warn', '2FA', `Código rejeitado: ${result.error}`);
-        setSessao((prev) => ({
-          ...prev,
-          sessionId: result.sessionId ?? prev.sessionId,
-        }));
+        setSessao((prev) => ({ ...prev, sessionId: result.sessionId ?? prev.sessionId }));
         setErro(result.error);
         return;
       }
 
       if (result.user) {
         addLog('success', '2FA', `Verificado — ${result.user.nomeUsuario}`);
-        setSessao({
-          autenticado: true,
-          sessionId: result.sessionId || sid,
-          usuario: result.user,
-          perfis: result.profiles || [],
-        });
+        setSessao({ autenticado: true, sessionId: result.sessionId || sid, usuario: result.user, perfis: result.profiles || [] });
         setEtapa(result.profiles?.length ? 'perfil' : 'download');
       } else if (result.needs2FA) {
         setErro('Código inválido ou expirado.');
@@ -358,10 +333,7 @@ export default function PaginaDownloadPJE() {
       });
     } catch (err: any) {
       setErro(err.message || 'Erro inesperado');
-      setExecucao((prev) => ({
-        ...prev, isDownloading: false,
-        downloadStatus: 'failed', downloadMessage: err.message || 'Erro',
-      }));
+      setExecucao((prev) => ({ ...prev, isDownloading: false, downloadStatus: 'failed', downloadMessage: err.message || 'Erro' }));
     }
 
     if (finalProgress) {
@@ -394,15 +366,9 @@ export default function PaginaDownloadPJE() {
         tipoServico: 'processos',
       });
     }
-  }, [
-    modo, tarefaSelecionada, isFavorite,
-    etiquetaSelecionada, sessao,
-    numerosValidados, tiposSelecionados,
-  ]);
+  }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, numerosValidados, tiposSelecionados]);
 
-  const handleCancelarDownload = useCallback(() => {
-    managerRef.current?.cancel();
-  }, []);
+  const handleCancelarDownload = useCallback(() => { managerRef.current?.cancel(); }, []);
 
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
@@ -411,28 +377,20 @@ export default function PaginaDownloadPJE() {
         const p = await obterProgressoAdvogados(jobId);
         setJobAdvogados({
           jobId, status: p.status, progress: p.progress,
-          message: p.message, totalProcesses: p.totalProcesses,
-          processedCount: p.processedCount,
+          message: p.message, totalProcesses: p.totalProcesses, processedCount: p.processedCount,
         });
         if (['completed', 'failed', 'cancelled'].includes(p.status)) {
           stopPolling();
           setCarregando(false);
-
           const statusMap: Record<string, ResultadoFinalState['status']> = {
-            completed: 'success',
-            failed: 'failed',
-            cancelled: 'cancelled',
+            completed: 'success', failed: 'failed', cancelled: 'cancelled',
           };
           setResultado({
             status: statusMap[p.status] || 'failed',
             titulo: p.status === 'completed' ? 'Planilha gerada com sucesso!'
-              : p.status === 'cancelled' ? 'Geração cancelada'
-              : 'Falha na geração',
+              : p.status === 'cancelled' ? 'Geração cancelada' : 'Falha na geração',
             mensagem: p.message,
-            resumo: {
-              total: p.totalProcesses, sucesso: p.processedCount,
-              falhas: p.totalProcesses - p.processedCount,
-            },
+            resumo: { total: p.totalProcesses, sucesso: p.processedCount, falhas: p.totalProcesses - p.processedCount },
             tipoServico: 'advogados',
             advogadosJobId: p.status === 'completed' ? jobId : undefined,
           });
@@ -466,20 +424,13 @@ export default function PaginaDownloadPJE() {
 
     try {
       const result = await gerarPlanilhaAdvogados(params);
-      setJobAdvogados({
-        jobId: result.jobId, status: 'listing', progress: 0,
-        message: 'Iniciando...', totalProcesses: 0, processedCount: 0,
-      });
+      setJobAdvogados({ jobId: result.jobId, status: 'listing', progress: 0, message: 'Iniciando...', totalProcesses: 0, processedCount: 0 });
       startPolling(result.jobId);
     } catch (err: any) {
       setErro(err.message || 'Erro ao iniciar geração');
       setCarregando(false);
     }
-  }, [
-    credenciais, modo, tarefaSelecionada,
-    isFavorite, etiquetaSelecionada, sessao,
-    filtrosAdv, startPolling,
-  ]);
+  }, [credenciais, modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, filtrosAdv, startPolling]);
 
   const handleCancelarAdvogados = useCallback(async () => {
     if (!jobAdvogados) return;
@@ -510,45 +461,60 @@ export default function PaginaDownloadPJE() {
     : ['by_task', 'by_tag', 'by_number'];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <main className="flex-1 max-w-4xl mx-auto px-6 py-8 w-full">
-        <div className="mb-8 flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 mb-1">Download PJE</h2>
-            <p className="text-sm text-slate-500">PJE/TJBA — Baixe processos e gere planilhas</p>
-            {sessao.perfilSelecionado && (
-              <div className="mt-3">
-                <ProfileBadge perfil={sessao.perfilSelecionado} />
-              </div>
-            )}
+    <div className="flex min-h-screen flex-col">
+      {/* ===== Barra superior institucional (azul) ===== */}
+      <header className="sticky top-0 z-30 bg-gradient-to-r from-navy-900 via-navy-800 to-navy-700 text-white shadow-lg shadow-navy-900/20">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3.5">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-brass-300 ring-1 ring-white/15 backdrop-blur">
+              <Landmark size={20} />
+            </span>
+            <div className="leading-tight">
+              <h1 className="font-display text-xl font-semibold tracking-tight text-white">
+                Fórum <span className="text-brass-300">Hub</span>
+              </h1>
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-navy-200">PJE · TJBA</p>
+            </div>
           </div>
 
           {sessao.autenticado && (
             <div className="flex items-center gap-2">
+              {sessao.usuario && (
+                <span className="mr-1 hidden text-xs text-navy-200 sm:inline">
+                  {sessao.usuario.nomeUsuario}
+                </span>
+              )}
               {sessao.perfilSelecionado && !isAnyTaskActive && (
                 <button
-                  type="button"
-                  onClick={handleMudarPerfil}
-                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 transition-colors"
+                  type="button" onClick={handleMudarPerfil}
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white/90 transition-colors hover:bg-white/15"
                 >
-                  <UserCog size={14} /> Mudar Perfil
+                  <UserCog size={14} /> <span className="hidden sm:inline">Perfil</span>
                 </button>
               )}
               <button
-                type="button"
-                onClick={handleLogout}
-                disabled={isAnyTaskActive}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-500 disabled:hover:bg-transparent disabled:hover:border-slate-200"
-                title={isAnyTaskActive ? 'Aguarde a conclusão da tarefa em andamento' : 'Sair do PJE'}
+                type="button" onClick={handleLogout} disabled={isAnyTaskActive}
+                title={isAnyTaskActive ? 'Aguarde a conclusão da tarefa' : 'Sair do PJE'}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white/90 transition-colors hover:border-red-300/40 hover:bg-red-500/15 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <LogOut size={14} /> Sair
+                <LogOut size={14} /> <span className="hidden sm:inline">Sair</span>
               </button>
             </div>
           )}
         </div>
+        {/* filete em latão para realçar a identidade */}
+        <div className="h-[3px] w-full bg-gradient-to-r from-brass-400/0 via-brass-400/70 to-brass-400/0" />
+      </header>
 
+      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
+        <div className="mb-8 text-center">
+          <h2 className="font-display text-3xl font-semibold tracking-tight text-ink">Central de processos</h2>
+          <p className="mt-1.5 text-sm text-slate-500">Baixe processos e gere planilhas do PJE/TJBA com poucos cliques.</p>
+        </div>
+
+        {/* ===== Fluxo de autenticação ===== */}
         {!mostrandoDownload && (
-          <div>
+          <div key={etapa} className="animate-fade">
             {(etapa === 'login' || etapa === '2fa') && (
               <EtapaLogin
                 carregando={carregando}
@@ -571,8 +537,14 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
 
+        {/* ===== Operação ===== */}
         {mostrandoDownload && (
-          <div className="max-w-3xl bg-white border-2 border-slate-200 p-6">
+          <div className="surface p-6 sm:p-7 animate-rise">
+            {sessao.perfilSelecionado && !mostrandoResultado && (
+              <div className="mb-6 border-b border-slate-100 pb-4">
+                <ProfileBadge perfil={sessao.perfilSelecionado} />
+              </div>
+            )}
 
             {mostrandoResultado && (
               <ResultadoFinal
@@ -584,48 +556,33 @@ export default function PaginaDownloadPJE() {
                 onNovaTarefa={handleNovaTarefa}
                 onMudarPerfil={handleMudarPerfil}
                 onLogout={handleLogout}
-                acaoExtra={
-                  resultado.advogadosJobId ? (
-                    <BotaoDownloadPlanilha jobId={resultado.advogadosJobId} />
-                  ) : undefined
-                }
+                acaoExtra={resultado.advogadosJobId ? <BotaoDownloadPlanilha jobId={resultado.advogadosJobId} /> : undefined}
               />
             )}
 
             {!mostrandoResultado && (
               <>
                 {erro && (
-                  <div className="mb-6 p-3 bg-red-50 border-2 border-red-200 flex items-start gap-2">
-                    <AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-red-700">{erro}</p>
+                  <div className="mb-6 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
+                    <span>{erro}</span>
                   </div>
                 )}
 
                 {execucao.downloadStatus !== 'idle' && servicoAtivo === 'processos' && (
                   <div className="mb-6">
-                    <ExecutionStatus
-                      estado={execucao}
-                      onCancelar={execucao.isDownloading ? handleCancelarDownload : undefined}
-                    />
+                    <ExecutionStatus estado={execucao} onCancelar={execucao.isDownloading ? handleCancelarDownload : undefined} />
                     {downloadProgress && downloadProgress.files.length > 0 && (
-                      <div className="mt-2 max-h-28 overflow-y-auto border border-slate-100 p-2">
+                      <div className="scroll-area mt-2 max-h-28 overflow-y-auto rounded-xl border border-slate-100 p-2">
                         {downloadProgress.files.slice(-6).reverse().map((f, i) => (
                           <div key={`${f.name}-${i}`} className="flex items-center gap-2 py-0.5 text-xs">
-                            {f.status === 'ok' && <CheckCircle size={10} className="text-emerald-500" />}
-                            {f.status === 'downloading' && <Loader2 size={10} className="text-blue-500 animate-spin" />}
-                            {f.status === 'error' && <X size={10} className="text-red-500" />}
-                            {f.status === 'not_available' && <AlertCircle size={10} className="text-amber-500" />}
-                            <span className={`truncate ${
-                              f.status === 'error' ? 'text-red-600'
-                              : f.status === 'not_available' ? 'text-amber-600'
-                              : 'text-slate-600'
-                            }`}>
-                              {f.name}
-                            </span>
-                            {f.size > 0 && <span className="text-slate-400 flex-shrink-0">{formatBytes(f.size)}</span>}
-                            {f.status === 'not_available' && (
-                              <span className="text-amber-500 text-[10px] flex-shrink-0">não disp.</span>
-                            )}
+                            {f.status === 'ok' && <CheckCircle size={11} className="text-emerald-500" />}
+                            {f.status === 'downloading' && <Loader2 size={11} className="animate-spin text-navy-500" />}
+                            {f.status === 'error' && <X size={11} className="text-red-500" />}
+                            {f.status === 'not_available' && <AlertCircle size={11} className="text-brass-500" />}
+                            <span className={`truncate ${f.status === 'error' ? 'text-red-600' : f.status === 'not_available' ? 'text-brass-600' : 'text-slate-600'}`}>{f.name}</span>
+                            {f.size > 0 && <span className="flex-shrink-0 text-slate-400">{formatBytes(f.size)}</span>}
+                            {f.status === 'not_available' && <span className="flex-shrink-0 text-[10px] text-brass-500">não disp.</span>}
                           </div>
                         ))}
                       </div>
@@ -647,51 +604,44 @@ export default function PaginaDownloadPJE() {
                 )}
 
                 {!isDownloadActive && !isAdvogadosActive && (
-                  <>
-                    <div className="mb-8">
-                      <ServiceSelector
-                        servicoSelecionado={servicoAtivo}
-                        onSelecionar={(s) => {
-                          setServicoAtivo(s);
-                          setErro(null);
+                  <div className="space-y-8">
+                    <ServiceSelector
+                      servicoSelecionado={servicoAtivo}
+                      onSelecionar={(s) => {
+                        setServicoAtivo(s);
+                        setErro(null);
+                        setTarefaSelecionada('');
+                        setEtiquetaSelecionada(null);
+                        setNumerosProcessoRaw('');
+                        setTiposSelecionados([]);
+                        if (s === 'advogados' && modo === 'by_number') setModo('by_task');
+                        setFiltrosAdv([]);
+                      }}
+                    />
+
+                    {servicoAtivo && (
+                      <DownloadModeSelector
+                        modoSelecionado={modo}
+                        onSelecionar={(m) => {
+                          if (servicoAtivo === 'advogados' && m === 'by_number') return;
+                          setModo(m);
                           setTarefaSelecionada('');
                           setEtiquetaSelecionada(null);
                           setNumerosProcessoRaw('');
-                          setTiposSelecionados([]);
-
-                          if (s === 'advogados' && modo === 'by_number') {
-                            setModo('by_task');
-                          }
-                          setFiltrosAdv([]);
                         }}
+                        desabilitado={!servicoAtivo}
+                        modosSuportados={modosSuportados}
                       />
-                    </div>
-
-                    {servicoAtivo && (
-                      <div className="mb-8">
-                        <DownloadModeSelector
-                          modoSelecionado={modo}
-                          onSelecionar={(m) => {
-
-                            if (servicoAtivo === 'advogados' && m === 'by_number') return;
-                            setModo(m);
-                            setTarefaSelecionada('');
-                            setEtiquetaSelecionada(null);
-                            setNumerosProcessoRaw('');
-                          }}
-                          desabilitado={!servicoAtivo}
-                          modosSuportados={modosSuportados}
-                        />
-                      </div>
                     )}
 
                     {servicoAtivo && (
-                      <div className="mb-4">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3 block">
-                          3. {modo === 'by_task' ? 'Selecione a tarefa'
-                            : modo === 'by_tag' ? 'Selecione a etiqueta'
-                            : 'Cole a lista de processos'}
-                        </label>
+                      <div>
+                        <div className="mb-3 flex items-center gap-2">
+                          <span className="num-badge">3</span>
+                          <span className="eyebrow">
+                            {modo === 'by_task' ? 'Selecione a tarefa' : modo === 'by_tag' ? 'Selecione a etiqueta' : 'Cole a lista de processos'}
+                          </span>
+                        </div>
 
                         {modo === 'by_task' && (
                           <>
@@ -703,13 +653,9 @@ export default function PaginaDownloadPJE() {
                               onSelecionar={(nome, fav) => { setTarefaSelecionada(nome); setIsFavorite(fav); }}
                             />
                             {tarefaSelecionada && (
-                              <div className="mt-3 p-3 bg-slate-50 border border-slate-200">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm font-semibold text-slate-900">{tarefaSelecionada}</span>
-                                  <span className="text-xs font-bold text-slate-500">
-                                    {totalProcessosTarefa} processo(s)
-                                  </span>
-                                </div>
+                              <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
+                                <span className="truncate text-sm font-semibold text-ink">{tarefaSelecionada}</span>
+                                <span className="chip flex-shrink-0 bg-navy-100 text-navy-700">{totalProcessosTarefa} processo(s)</span>
                               </div>
                             )}
                           </>
@@ -724,38 +670,30 @@ export default function PaginaDownloadPJE() {
                         )}
 
                         {modo === 'by_number' && (
-                          <ListaProcessos
-                            valor={numerosProcessoRaw}
-                            onChange={setNumerosProcessoRaw}
-                          />
+                          <ListaProcessos valor={numerosProcessoRaw} onChange={setNumerosProcessoRaw} />
                         )}
                       </div>
                     )}
 
-                    {}
                     {servicoAtivo === 'processos' && (
-                      <div className="mb-6">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2 block">
-                          4. Tipos de documento
-                        </label>
-                        <SeletorTipoDocumento
-                          selecionados={tiposSelecionados}
-                          onChange={setTiposSelecionados}
-                        />
+                      <div>
+                        <div className="mb-3 flex items-center gap-2">
+                          <span className="num-badge">4</span>
+                          <span className="eyebrow">Tipos de documento</span>
+                        </div>
+                        <SeletorTipoDocumento selecionados={tiposSelecionados} onChange={setTiposSelecionados} />
                       </div>
                     )}
 
                     {servicoAtivo === 'advogados' && (
-                      <div className="mb-4">
-                        <FiltrosAdvogados filtros={filtrosAdv} onChange={setFiltrosAdv} />
-                      </div>
+                      <FiltrosAdvogados filtros={filtrosAdv} onChange={setFiltrosAdv} />
                     )}
 
                     {servicoAtivo === 'processos' && (
-                      <div className="mb-2 px-3 py-2 bg-slate-50 border border-slate-200 flex items-center gap-2 text-xs text-slate-500">
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs text-slate-500">
                         {fsApiSupported
-                          ? <><HardDrive size={12} /> PDFs serão salvos direto no seu computador</>
-                          : <><FileArchive size={12} /> PDFs serão empacotados em ZIP para download</>}
+                          ? <><HardDrive size={13} /> Os PDFs serão salvos direto no seu computador.</>
+                          : <><FileArchive size={13} /> Os PDFs serão empacotados em um ZIP para download.</>}
                       </div>
                     )}
 
@@ -771,13 +709,19 @@ export default function PaginaDownloadPJE() {
                       totalProcessos={totalProcessosTarefa}
                       onClick={handleSubmit}
                     />
-                  </>
+                  </div>
                 )}
               </>
             )}
           </div>
         )}
       </main>
+
+      <footer className="border-t border-slate-200/70 py-6">
+        <p className="text-center text-xs text-slate-400">
+          Sistema interno de apoio ao PJE/TJBA · {new Date().getFullYear()}
+        </p>
+      </footer>
     </div>
   );
 }
@@ -789,30 +733,17 @@ function BotaoDownloadPlanilha({ jobId }: { jobId: string }) {
   const handleDownload = async () => {
     setBaixando(true);
     setErroDownload(null);
-    try {
-      await downloadPlanilha(jobId);
-    } catch (err: any) {
-      setErroDownload(err.message || 'Erro ao baixar planilha');
-    } finally {
-      setBaixando(false);
-    }
+    try { await downloadPlanilha(jobId); }
+    catch (err: any) { setErroDownload(err.message || 'Erro ao baixar planilha'); }
+    finally { setBaixando(false); }
   };
 
   return (
     <>
-      <button
-        type="button"
-        onClick={handleDownload}
-        disabled={baixando}
-        className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {baixando
-          ? <><Loader2 size={16} className="animate-spin" /> Baixando...</>
-          : <><CheckCircle size={16} /> Baixar Planilha</>}
+      <button type="button" onClick={handleDownload} disabled={baixando} className="btn btn-emerald w-full py-2.5 text-sm">
+        {baixando ? <><Loader2 size={16} className="animate-spin" /> Baixando…</> : <><CheckCircle size={16} /> Baixar planilha</>}
       </button>
-      {erroDownload && (
-        <p className="mt-2 text-xs text-red-600 text-center">{erroDownload}</p>
-      )}
+      {erroDownload && <p className="mt-2 text-center text-xs text-red-600">{erroDownload}</p>}
     </>
   );
 }

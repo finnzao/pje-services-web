@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { User } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 import type { PerfilPJE } from './types';
 
 interface ProfileBadgeProps {
@@ -9,21 +9,15 @@ interface ProfileBadgeProps {
   className?: string;
 }
 
-// Exibe informações do perfil de forma minimalista
 export function ProfileBadge({ perfil, className = '' }: ProfileBadgeProps) {
-  // Truncar nome do perfil se muito longo
-  const nomeCurto = perfil.nome.length > 40
-    ? perfil.nome.substring(0, 37) + '...'
-    : perfil.nome;
-
   return (
-    <div className={`flex items-center gap-2 text-xs ${className}`}>
-      <User size={12} className="text-slate-400 flex-shrink-0" />
+    <div className={`flex items-center gap-2.5 ${className}`}>
+      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-600">
+        <Building2 size={15} />
+      </span>
       <div className="min-w-0">
-        <span className="text-slate-400 mr-1">Perfil ativo</span>
-        <span className="font-semibold text-slate-600 truncate" title={perfil.nome}>
-          {nomeCurto}
-        </span>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Perfil ativo</p>
+        <p className="truncate text-sm font-semibold text-ink" title={perfil.nome}>{perfil.nome}</p>
       </div>
     </div>
   );

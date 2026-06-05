@@ -168,9 +168,8 @@ export class UrlExtractor {
         'AJAX:EVENTS_COUNT': '1',
       };
 
-      if (documentTypeId) {
-        postBodyParams['navbar:cbTipoDocumento'] = documentTypeId;
-      }
+      // '0' = todos os documentos; omitir o campo faz o POST do JSF não disparar a geração do PDF
+      postBodyParams['navbar:cbTipoDocumento'] = documentTypeId || '0';
 
       const postBody = new URLSearchParams(postBodyParams);
 

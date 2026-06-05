@@ -21,47 +21,37 @@ export function ProgressoJob({
   const [erroDownload, setErroDownload] = useState<string | null>(null);
 
   const isDone = ['completed', 'failed', 'cancelled'].includes(status);
+  const tone = status === 'completed'
+    ? 'border-emerald-200 bg-emerald-50'
+    : status === 'failed' ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50/60';
 
-  const borderClass =
-    status === 'completed' ? 'border-emerald-300 bg-emerald-50' :
-    status === 'failed' ? 'border-red-300 bg-red-50' :
-    'border-blue-300 bg-blue-50';
-
-  const Icon =
-    status === 'completed' ? <CheckCircle size={16} className="text-emerald-600" /> :
-    status === 'failed' ? <AlertCircle size={16} className="text-red-600" /> :
-    <Loader2 size={16} className="text-blue-600 animate-spin" />;
+  const Icon = status === 'completed'
+    ? <CheckCircle size={16} className="text-emerald-600" />
+    : status === 'failed' ? <AlertCircle size={16} className="text-red-600" /> : <Loader2 size={16} className="animate-spin text-emerald-600" />;
 
   const handleDownload = async () => {
     if (!onDownload) return;
-    setBaixando(true);
-    setErroDownload(null);
-    try {
-      await onDownload();
-    } catch (err: any) {
-      setErroDownload(err.message || 'Erro ao baixar planilha');
-    } finally {
-      setBaixando(false);
-    }
+    setBaixando(true); setErroDownload(null);
+    try { await onDownload(); }
+    catch (err: any) { setErroDownload(err.message || 'Erro ao baixar planilha'); }
+    finally { setBaixando(false); }
   };
 
   return (
-    <div className={`p-4 border-2 ${borderClass}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+    <div className={`rounded-2xl border p-4 animate-fade ${tone}`}>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           {Icon}
-          <span className="text-sm font-bold text-slate-900">{message}</span>
+          <span className="truncate text-sm font-semibold text-ink">{message}</span>
         </div>
         {!isDone && onCancelar && (
-          <button type="button" onClick={onCancelar} className="text-xs font-bold text-red-600 hover:text-red-800">
-            <X size={14} />
-          </button>
+          <button type="button" onClick={onCancelar} className="flex-shrink-0 text-red-600 hover:text-red-800"><X size={15} /></button>
         )}
       </div>
 
       {!isDone && (
-        <div className="w-full h-2 bg-slate-200 overflow-hidden mb-1">
-          <div className="h-full bg-blue-600 transition-all duration-500" style={{ width: `${progress}%` }} />
+        <div className="progress-track mb-1">
+          <div className="progress-bar bg-emerald-600" style={{ width: `${progress}%` }} />
         </div>
       )}
 
@@ -72,19 +62,10 @@ export function ProgressoJob({
 
       {status === 'completed' && onDownload && (
         <>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={baixando}
-            className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {baixando
-              ? <><Loader2 size={16} className="animate-spin" /> Baixando...</>
-              : <><Download size={16} /> Baixar Planilha</>}
+          <button type="button" onClick={handleDownload} disabled={baixando} className="btn btn-emerald mt-3 w-full py-2.5 text-sm">
+            {baixando ? <><Loader2 size={16} className="animate-spin" /> Baixando…</> : <><Download size={16} /> Baixar planilha</>}
           </button>
-          {erroDownload && (
-            <p className="mt-2 text-xs text-red-600 text-center">{erroDownload}</p>
-          )}
+          {erroDownload && <p className="mt-2 text-center text-xs text-red-600">{erroDownload}</p>}
         </>
       )}
     </div>

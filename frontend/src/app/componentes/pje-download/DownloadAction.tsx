@@ -9,9 +9,7 @@ interface DownloadActionProps {
   modo: PJEDownloadMode;
   tarefaSelecionada: string;
   etiquetaSelecionada: number | null;
-
   numerosProcesso: string[];
-
   tiposSelecionados?: string[];
   carregando: boolean;
   fsApiSupported?: boolean;
@@ -20,89 +18,53 @@ interface DownloadActionProps {
 }
 
 function validarFluxo(
-  servico: ServicoAtivo | null,
-  modo: PJEDownloadMode,
-  tarefaSelecionada: string,
-  etiquetaSelecionada: number | null,
-  numerosProcesso: string[],
+  servico: ServicoAtivo | null, modo: PJEDownloadMode,
+  tarefaSelecionada: string, etiquetaSelecionada: number | null, numerosProcesso: string[],
 ): { valido: boolean; mensagem: string } {
-  if (!servico) {
-    return { valido: false, mensagem: 'Selecione um serviço para continuar' };
-  }
-  if (modo === 'by_task' && !tarefaSelecionada) {
-    return { valido: false, mensagem: 'Selecione uma tarefa para continuar' };
-  }
-  if (modo === 'by_tag' && !etiquetaSelecionada) {
-    return { valido: false, mensagem: 'Selecione uma etiqueta para continuar' };
-  }
-  if (modo === 'by_number' && numerosProcesso.length === 0) {
-    return { valido: false, mensagem: 'Cole ao menos um número CNJ válido' };
-  }
+  if (!servico) return { valido: false, mensagem: 'Selecione um serviço para continuar' };
+  if (modo === 'by_task' && !tarefaSelecionada) return { valido: false, mensagem: 'Selecione uma tarefa para continuar' };
+  if (modo === 'by_tag' && !etiquetaSelecionada) return { valido: false, mensagem: 'Selecione uma etiqueta para continuar' };
+  if (modo === 'by_number' && numerosProcesso.length === 0) return { valido: false, mensagem: 'Cole ao menos um número CNJ válido' };
   return { valido: true, mensagem: '' };
 }
 
 export function DownloadAction({
-  servico, modo,
-  tarefaSelecionada, etiquetaSelecionada,
+  servico, modo, tarefaSelecionada, etiquetaSelecionada,
   numerosProcesso, tiposSelecionados = [],
-  carregando, fsApiSupported = false,
-  totalProcessos = 0, onClick,
+  carregando, fsApiSupported = false, totalProcessos = 0, onClick,
 }: DownloadActionProps) {
-  const { valido, mensagem } = validarFluxo(
-    servico, modo, tarefaSelecionada, etiquetaSelecionada, numerosProcesso,
-  );
-
+  const { valido, mensagem } = validarFluxo(servico, modo, tarefaSelecionada, etiquetaSelecionada, numerosProcesso);
   const habilitado = valido && !carregando;
   const isAdvogados = servico === 'advogados';
-  const tiposLimpos = tiposSelecionados.filter((s) => s && s !== 'Selecione');
-  const numTipos = tiposLimpos.length;
+  const numTipos = tiposSelecionados.filter((s) => s && s !== 'Selecione').length;
 
   const obterLabel = (): string => {
-    if (carregando) return 'Processando...';
-    if (!valido) return isAdvogados ? 'Gerar Planilha' : 'Baixar Processos';
-
-    if (isAdvogados) return 'Gerar Planilha de Advogados';
-
-    const tipoSuffix = numTipos > 0
-      ? ` × ${numTipos} tipo(s)`
-      : '';
-
-    if (modo === 'by_task' && tarefaSelecionada) {
-      return `Baixar ${totalProcessos} processo(s)${tipoSuffix}`;
-    }
-    if (modo === 'by_tag' && etiquetaSelecionada) {
-      return `Baixar processos da etiqueta${tipoSuffix}`;
-    }
-    if (modo === 'by_number' && numerosProcesso.length > 0) {
-      return `Baixar ${numerosProcesso.length} processo(s) da lista${tipoSuffix}`;
-    }
+    if (carregando) return 'Processando…';
+    if (!valido) return isAdvogados ? 'Gerar planilha' : 'Baixar processos';
+    if (isAdvogados) return 'Gerar planilha de advogados';
+    const sufixo = numTipos > 0 ? ` × ${numTipos} tipo(s)` : '';
+    if (modo === 'by_task' && tarefaSelecionada) return `Baixar ${totalProcessos} processo(s)${sufixo}`;
+    if (modo === 'by_tag' && etiquetaSelecionada) return `Baixar processos da etiqueta${sufixo}`;
+    if (modo === 'by_number' && numerosProcesso.length > 0) return `Baixar ${numerosProcesso.length} processo(s)${sufixo}`;
     return fsApiSupported ? 'Escolher pasta e baixar' : 'Baixar como ZIP';
   };
 
-  const IconeBotao = isAdvogados ? FileSpreadsheet : Download;
+  const Icone = isAdvogados ? FileSpreadsheet : Download;
 
   return (
-    <div className="sticky bottom-0 bg-white border-t-2 border-slate-200 p-4 -mx-6 mt-6">
+    <div className="sticky bottom-0 -mx-6 mt-6 border-t border-slate-200 bg-white/85 px-6 py-4 backdrop-blur-md">
       <button
         type="button"
         onClick={onClick}
         disabled={!habilitado}
-        className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 text-sm font-bold transition-all ${
-          habilitado
-            ? isAdvogados
-              ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-              : 'bg-slate-900 text-white hover:bg-slate-800'
-            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-        }`}
+        className={`btn w-full py-3.5 text-sm ${habilitado ? (isAdvogados ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-400'}`}
       >
-        {carregando
-          ? <Loader2 size={16} className="animate-spin" />
-          : <IconeBotao size={16} />}
+        {carregando ? <Loader2 size={16} className="animate-spin" /> : <Icone size={16} />}
         {obterLabel()}
       </button>
 
       {!valido && !carregando && (
-        <div className="flex items-center justify-center gap-1.5 mt-2">
+        <div className="mt-2 flex items-center justify-center gap-1.5">
           <AlertCircle size={12} className="text-slate-400" />
           <p className="text-xs text-slate-400">{mensagem}</p>
         </div>

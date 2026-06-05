@@ -1,13 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Lock, Mail, Smartphone, Loader2, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Smartphone, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 
 interface Props {
   carregando: boolean;
   erro: string | null;
   aguardando2FA: boolean;
-
   twoFactorType?: 'totp' | 'email';
   onLogin: (cpf: string, senha: string) => void;
   onEnviar2FA: (codigo: string) => void;
@@ -29,137 +28,109 @@ export function EtapaLogin({
 
   const handleSubmit2FA = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!codigo2FA.trim() || codigo2FA.length !== 6) return;
+    if (codigo2FA.length !== 6) return;
     onEnviar2FA(codigo2FA);
   };
 
+  // ===== Etapa 2FA =====
   if (aguardando2FA) {
     const isTotp = twoFactorType === 'totp';
     return (
-      <div className="max-w-md mx-auto">
-        <div className="border-2 border-slate-200 p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div
-              className={`w-10 h-10 flex items-center justify-center ${
-                isTotp ? 'bg-blue-100' : 'bg-amber-100'
-              }`}
-            >
-              {isTotp
-                ? <Smartphone size={20} className="text-blue-700" />
-                : <Mail size={20} className="text-amber-700" />}
+      <div className="mx-auto max-w-md animate-rise">
+        <div className="surface overflow-hidden">
+          <div className="flex items-center gap-4 border-b border-slate-100 px-7 py-6">
+            <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${isTotp ? 'bg-navy-50 text-navy-700' : 'bg-brass-50 text-brass-600'}`}>
+              {isTotp ? <Smartphone size={20} /> : <Mail size={20} />}
             </div>
             <div>
-              <h3 className="text-lg font-bold text-slate-900">Verificação em 2 etapas</h3>
-              <p className="text-sm text-slate-500">
-                {isTotp
-                  ? 'Abra seu app autenticador'
-                  : 'Código enviado para seu email'}
-              </p>
+              <h3 className="font-display text-xl font-semibold text-ink">Verificação em duas etapas</h3>
+              <p className="text-sm text-slate-500">{isTotp ? 'Abra seu app autenticador' : 'Código enviado para seu e-mail'}</p>
             </div>
           </div>
 
-          {isTotp && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-xs text-blue-800">
-              Abra <strong>Microsoft Authenticator</strong>, <strong>Google Authenticator</strong>{' '}
-              ou outro app autenticador, encontre a entrada do PJE e digite o código de 6 dígitos
-              que aparece na tela.
-            </div>
-          )}
+          <div className="px-7 py-6">
+            {isTotp && (
+              <p className="mb-4 rounded-xl bg-navy-50 px-3.5 py-3 text-xs leading-relaxed text-navy-700">
+                Abra o <strong>Microsoft Authenticator</strong>, <strong>Google Authenticator</strong> ou app equivalente,
+                localize a entrada do PJE e informe o código de 6 dígitos.
+              </p>
+            )}
 
-          {erro && (
-            <div className="mb-4 p-3 bg-red-50 border-2 border-red-200 flex items-start gap-2">
-              <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
-              <p className="text-sm text-red-700">{erro}</p>
-            </div>
-          )}
+            {erro && <Alerta>{erro}</Alerta>}
 
-          <form onSubmit={handleSubmit2FA}>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">
-              Código de 6 dígitos
-            </label>
-            <input
-              type="text"
-              maxLength={6}
-              pattern="\d{6}"
-              inputMode="numeric"
-              value={codigo2FA}
-              onChange={(e) => setCodigo2FA(e.target.value.replace(/\D/g, ''))}
-              placeholder="000000"
-              className="w-full px-4 py-3 border-2 border-slate-200 text-center text-2xl tracking-[0.5em] font-mono focus:border-slate-900 focus:outline-none"
-              disabled={carregando}
-              autoFocus
-              autoComplete="one-time-code"
-            />
-            <button
-              type="submit"
-              disabled={carregando || codigo2FA.length !== 6}
-              className="w-full mt-4 px-4 py-3 bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {carregando ? <Loader2 size={16} className="animate-spin" /> : null}
-              {carregando ? 'Verificando...' : 'Verificar código'}
-            </button>
-          </form>
+            <form onSubmit={handleSubmit2FA}>
+              <label className="label mb-2">Código de verificação</label>
+              <input
+                type="text" maxLength={6} inputMode="numeric" autoFocus autoComplete="one-time-code"
+                value={codigo2FA}
+                onChange={(e) => setCodigo2FA(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                disabled={carregando}
+                className="field text-center font-mono text-3xl tracking-[0.5em]"
+              />
+              <button type="submit" disabled={carregando || codigo2FA.length !== 6} className="btn btn-primary mt-5 w-full py-3 text-sm">
+                {carregando ? <><Loader2 size={16} className="animate-spin" /> Verificando…</> : <><ShieldCheck size={16} /> Verificar código</>}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     );
   }
 
+  // ===== Etapa de login =====
   return (
-    <div className="max-w-md mx-auto">
-      <div className="border-2 border-slate-200 p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-slate-900 flex items-center justify-center">
-            <Lock size={20} className="text-white" />
+    <div className="mx-auto max-w-md animate-rise">
+      <div className="surface overflow-hidden">
+        <div className="flex items-center gap-4 border-b border-slate-100 px-7 py-6">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-navy-800 text-white">
+            <Lock size={20} />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-slate-900">Login PJE/TJBA</h3>
+            <h3 className="font-display text-xl font-semibold text-ink">Acesso ao PJE/TJBA</h3>
             <p className="text-sm text-slate-500">Use suas credenciais do PJE</p>
           </div>
         </div>
-        {erro && (
-          <div className="mb-4 p-3 bg-red-50 border-2 border-red-200 flex items-start gap-2">
-            <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-red-700">{erro}</p>
-          </div>
-        )}
-        <form onSubmit={handleSubmitLogin}>
-          <div className="mb-4">
-            <label className="block text-sm font-semibold text-slate-700 mb-1">CPF</label>
-            <input
-              type="text"
-              value={cpf}
-              onChange={(e) => setCpf(e.target.value)}
-              placeholder="000.000.000-00"
-              autoComplete="username"
-              className="w-full px-4 py-2.5 border-2 border-slate-200 focus:border-slate-900 focus:outline-none text-sm"
-              disabled={carregando}
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-slate-700 mb-1">Senha</label>
-            <input
-              type="password"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              placeholder="Senha do PJE"
-              autoComplete="current-password"
-              className="w-full px-4 py-2.5 border-2 border-slate-200 focus:border-slate-900 focus:outline-none text-sm"
-              disabled={carregando}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={carregando || !cpf.trim() || !senha.trim()}
-            className="w-full px-4 py-3 bg-slate-900 text-white font-bold text-sm hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {carregando ? <Loader2 size={16} className="animate-spin" /> : null}
-            {carregando ? 'Autenticando...' : 'Entrar no PJE'}
-          </button>
-        </form>
-        <p className="mt-4 text-xs text-slate-400 text-center">
-          Suas credenciais são enviadas diretamente ao PJE e não são armazenadas.
-        </p>
+
+        <div className="px-7 py-6">
+          {erro && <Alerta>{erro}</Alerta>}
+
+          <form onSubmit={handleSubmitLogin} className="space-y-4">
+            <div>
+              <label className="label mb-1.5">CPF</label>
+              <input
+                type="text" value={cpf} onChange={(e) => setCpf(e.target.value)}
+                placeholder="000.000.000-00" autoComplete="username" disabled={carregando}
+                className="field font-mono"
+              />
+            </div>
+            <div>
+              <label className="label mb-1.5">Senha</label>
+              <input
+                type="password" value={senha} onChange={(e) => setSenha(e.target.value)}
+                placeholder="Senha do PJE" autoComplete="current-password" disabled={carregando}
+                className="field"
+              />
+            </div>
+            <button type="submit" disabled={carregando || !cpf.trim() || !senha.trim()} className="btn btn-primary w-full py-3 text-sm">
+              {carregando ? <><Loader2 size={16} className="animate-spin" /> Autenticando…</> : 'Entrar no PJE'}
+            </button>
+          </form>
+
+          <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+            <ShieldCheck size={13} /> Credenciais enviadas diretamente ao PJE — não são armazenadas.
+          </p>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function Alerta({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+      <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
+      <span>{children}</span>
     </div>
   );
 }
