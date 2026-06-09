@@ -6,7 +6,7 @@ function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout
 
 interface StoredSession { cookies: Record<string, string>; idUsuarioLocalizacao: string; idUsuario?: number; }
 interface PendingItem { proc: { idProcesso: number; numeroProcesso: string }; requestedAt: number; }
-interface CollectResult { processNumber: string; file?: PJEDownloadedFile; error?: string; }
+interface CollectResult { processNumber: string; files?: PJEDownloadedFile[]; error?: string; }
 
 export class PendingDownloadCollector {
   private s3Collector = new S3Collector();
@@ -29,7 +29,7 @@ export class PendingDownloadCollector {
           if (!matchedDigits) { const d = (dl.nomeArquivo || '').replace(/\D/g, ''); for (const [digits] of remaining) { if (d.includes(digits)) { matchedDigits = digits; break; } } }
           if (matchedDigits && dl.hashDownload) {
             const item = remaining.get(matchedDigits)!;
-            try { const s3Url = await this.s3Collector.generateS3DownloadUrl(stored, dl.hashDownload); if (s3Url) { const file = await this.s3Collector.downloadFromS3(s3Url, item.proc.numeroProcesso, downloadDir); results.push({ processNumber: item.proc.numeroProcesso, file }); remaining.delete(matchedDigits); } } catch {}
+            try { const s3Url = await this.s3Collector.generateS3DownloadUrl(stored, dl.hashDownload); if (s3Url) { const files = await this.s3Collector.downloadFromS3(s3Url, item.proc.numeroProcesso, downloadDir); results.push({ processNumber: item.proc.numeroProcesso, files }); remaining.delete(matchedDigits); } } catch {}
           }
         }
       } catch {}

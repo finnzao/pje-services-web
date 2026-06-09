@@ -8,6 +8,7 @@ import type {
   PJEDownloadError as PJEDownloadErrorType,
   DownloadJobResponse,
 } from '../../shared/types';
+import { writePjeDownload } from '../../shared/pdf-zip-extractor';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -206,7 +207,7 @@ export class PJEDownloadWorker {
 
         try {
           const result = await this.requestDownload(stored, proc);
-          if (result.type === 'direct' && result.file) { files.push(result.file); successCount++; }
+          if (result.type === 'direct' && result.files?.length) { files.push(...result.files); successCount++; }
           else if (result.type === 'queued') { pendingDownloads.push({ proc, requestedAt: Date.now() }); }
           else { failureCount++; errors.push({ processNumber: proc.numeroProcesso, message: result.error || 'Erro ao solicitar download', code: 'REQUEST_FAILED', timestamp: new Date().toISOString() }); }
         } catch (err) {
@@ -218,7 +219,7 @@ export class PJEDownloadWorker {
           if (pendingDownloads.length > 0) {
             const batchResults = await this.collectPendingDownloads(stored, pendingDownloads, jobId);
             for (const br of batchResults) {
-              if (br.file) { files.push(br.file); successCount++; }
+              if (br.files?.length) { files.push(...br.files); successCount++; }
               else { failureCount++; errors.push({ processNumber: br.processNumber, message: br.error || 'Timeout', code: 'DOWNLOAD_TIMEOUT', timestamp: new Date().toISOString() }); }
             }
             pendingDownloads.length = 0;
@@ -240,7 +241,7 @@ export class PJEDownloadWorker {
             const proc = missingProcesses[i];
             try {
               const result = await this.requestDownload(stored, proc);
-              if (result.type === 'direct' && result.file) { files.push(result.file); successCount++; const errIdx = errors.findIndex((e) => e.processNumber === proc.numeroProcesso); if (errIdx >= 0) { errors.splice(errIdx, 1); failureCount = Math.max(0, failureCount - 1); } missingProcesses.splice(i, 1); }
+              if (result.type === 'direct' && result.files?.length) { files.push(...result.files); successCount++; const errIdx = errors.findIndex((e) => e.processNumber === proc.numeroProcesso); if (errIdx >= 0) { errors.splice(errIdx, 1); failureCount = Math.max(0, failureCount - 1); } missingProcesses.splice(i, 1); }
               else if (result.type === 'queued') retryPending.push({ proc, requestedAt: Date.now() });
             } catch { /* silent */ }
             await this.sleep(DOWNLOAD_DELAY);
@@ -248,7 +249,7 @@ export class PJEDownloadWorker {
           if (retryPending.length > 0) {
             const batchResults = await this.collectPendingDownloads(stored, retryPending, jobId);
             for (const br of batchResults) {
-              if (br.file) { files.push(br.file); successCount++; const errIdx = errors.findIndex((e) => e.processNumber === br.processNumber); if (errIdx >= 0) { errors.splice(errIdx, 1); failureCount = Math.max(0, failureCount - 1); } const missIdx = missingProcesses.findIndex((p) => p.numeroProcesso === br.processNumber); if (missIdx >= 0) missingProcesses.splice(missIdx, 1); }
+              if (br.files?.length) { files.push(...br.files); successCount++; const errIdx = errors.findIndex((e) => e.processNumber === br.processNumber); if (errIdx >= 0) { errors.splice(errIdx, 1); failureCount = Math.max(0, failureCount - 1); } const missIdx = missingProcesses.findIndex((p) => p.numeroProcesso === br.processNumber); if (missIdx >= 0) missingProcesses.splice(missIdx, 1); }
             }
           }
         }
@@ -265,7 +266,7 @@ export class PJEDownloadWorker {
     }
   }
 
-  private async requestDownload(stored: { cookies: Record<string, string>; idUsuarioLocalizacao: string; idUsuario?: number }, proc: { idProcesso: number; numeroProcesso: string; idTaskInstance?: number }): Promise<{ type: 'direct' | 'queued' | 'error'; file?: PJEDownloadedFile; error?: string }> {
+  private async requestDownload(stored: { cookies: Record<string, string>; idUsuarioLocalizacao: string; idUsuario?: number }, proc: { idProcesso: number; numeroProcesso: string; idTaskInstance?: number }): Promise<{ type: 'direct' | 'queued' | 'error'; files?: PJEDownloadedFile[]; error?: string }> {
     const { idProcesso, numeroProcesso, idTaskInstance } = proc;
     if (!idProcesso) return { type: 'error', error: `idProcesso não disponível para ${numeroProcesso}` };
     try {
@@ -285,8 +286,8 @@ export class PJEDownloadWorker {
       const postBody = new URLSearchParams({ AJAXREQUEST: '_viewRoot', 'navbar:cbTipoDocumento': '0', 'navbar:idDe': '', 'navbar:idAte': '', 'navbar:dtInicioInputDate': '', 'navbar:dtInicioInputCurrentDate': currentDate, 'navbar:dtFimInputDate': '', 'navbar:dtFimInputCurrentDate': currentDate, 'navbar:cbCronologia': 'DESC', '': 'on', navbar: 'navbar', autoScroll: '', 'javax.faces.ViewState': viewStateMatch[1], [downloadBtnId]: downloadBtnId, 'AJAX:EVENTS_COUNT': '1' });
       const downloadRes = await fetch(`${PJE_BASE}/pje/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', Cookie: cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'X-Requested-With': 'XMLHttpRequest', 'Faces-Request': 'partial/ajax' }, body: postBody.toString(), redirect: 'follow' });
       const responseHtml = await downloadRes.text();
-      const s3UrlMatch = responseHtml.match(/window\.open\('(https:\/\/[^']*s3[^']*\.pdf[^']*?)'/);
-      if (s3UrlMatch?.[1]) { const file = await this.downloadFromS3(s3UrlMatch[1], numeroProcesso); return { type: 'direct', file }; }
+      const s3UrlMatch = responseHtml.match(/window\.open\('(https:\/\/[^']*s3[^']*\.(?:pdf|zip)[^']*?)'/);
+      if (s3UrlMatch?.[1]) { const downloadedFiles = await this.downloadFromS3(s3UrlMatch[1], numeroProcesso); return { type: 'direct', files: downloadedFiles }; }
       if (responseHtml.includes('será disponibilizado') || responseHtml.includes('será gerado') || responseHtml.includes('está sendo gerado') || responseHtml.includes('Área de download') || /window\.open\(''\)/.test(responseHtml) || responseHtml.length > 5000) return { type: 'queued' };
       return { type: 'error', error: `Resposta inesperada ao solicitar download de ${numeroProcesso}` };
     } catch (err) { return { type: 'error', error: err instanceof Error ? err.message : 'Erro ao solicitar download' }; }
@@ -303,8 +304,8 @@ export class PJEDownloadWorker {
     const allIds = [...allButtons.keys()]; return allIds[allIds.length - 1];
   }
 
-  private async collectPendingDownloads(stored: any, pendingList: Array<{ proc: { idProcesso: number; numeroProcesso: string }; requestedAt: number }>, jobId: string): Promise<Array<{ processNumber: string; file?: PJEDownloadedFile; error?: string }>> {
-    const results: Array<{ processNumber: string; file?: PJEDownloadedFile; error?: string }> = [];
+  private async collectPendingDownloads(stored: any, pendingList: Array<{ proc: { idProcesso: number; numeroProcesso: string }; requestedAt: number }>, jobId: string): Promise<Array<{ processNumber: string; files?: PJEDownloadedFile[]; error?: string }>> {
+    const results: Array<{ processNumber: string; files?: PJEDownloadedFile[]; error?: string }> = [];
     if (pendingList.length === 0) return results;
     const remaining = new Map<string, any>();
     for (const item of pendingList) remaining.set(item.proc.numeroProcesso.replace(/\D/g, ''), item);
@@ -323,7 +324,7 @@ export class PJEDownloadWorker {
           if (!matchedDigits) { const d = (dl.nomeArquivo || '').replace(/\D/g, ''); for (const [digits] of remaining) { if (d.includes(digits)) { matchedDigits = digits; break; } } }
           if (matchedDigits && dl.hashDownload) {
             const item = remaining.get(matchedDigits)!;
-            try { const s3Url = await this.generateS3DownloadUrl(stored, dl.hashDownload); if (s3Url) { const file = await this.downloadFromS3(s3Url, item.proc.numeroProcesso); results.push({ processNumber: item.proc.numeroProcesso, file }); remaining.delete(matchedDigits); } } catch { /* silent */ }
+            try { const s3Url = await this.generateS3DownloadUrl(stored, dl.hashDownload); if (s3Url) { const downloadedFiles = await this.downloadFromS3(s3Url, item.proc.numeroProcesso); results.push({ processNumber: item.proc.numeroProcesso, files: downloadedFiles }); remaining.delete(matchedDigits); } } catch { /* silent */ }
           }
         }
       } catch { /* silent */ }
@@ -398,14 +399,15 @@ export class PJEDownloadWorker {
     } catch { return []; }
   }
 
-  private async downloadFromS3(url: string, numeroProcesso: string): Promise<PJEDownloadedFile> {
-    const fileName = `${numeroProcesso}-processo.pdf`;
-    const filePath = path.join(DOWNLOAD_DIR, fileName);
+  /**
+   * Baixa o conteúdo do S3 e grava no disco tratando ZIP x PDF.
+   * Um único processo pode gerar vários PDFs (ZIP com múltiplos volumes).
+   */
+  private async downloadFromS3(url: string, numeroProcesso: string): Promise<PJEDownloadedFile[]> {
     const res = await fetch(url, { method: 'GET', redirect: 'follow' });
     if (!res.ok) throw new Error(`Falha ao baixar de S3: HTTP ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(filePath, buffer);
-    return { processNumber: numeroProcesso, fileName, filePath, fileSize: buffer.length, downloadedAt: new Date().toISOString() };
+    return writePjeDownload(buffer, numeroProcesso, DOWNLOAD_DIR);
   }
 
   private async updateStatus(jobId: string, status: PJEJobStatus, progress: number, message: string, currentProcess?: string, totalProcesses = 0, successCount = 0, failureCount = 0, files: PJEDownloadedFile[] = [], errors: PJEDownloadErrorType[] = []): Promise<void> {

@@ -18,7 +18,8 @@
     "@fastify/jwt": "^10.0.0",
     "@fastify/rate-limit": "^10.2.0",
     "exceljs": "^4.4.0",
-    "fastify": "^5.7.4"
+    "fastify": "^5.7.4",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

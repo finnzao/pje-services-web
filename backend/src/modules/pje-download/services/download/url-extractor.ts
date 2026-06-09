@@ -193,9 +193,10 @@ export class UrlExtractor {
 
       const responseHtml = await downloadRes.text();
 
+      // Aceita tanto .pdf quanto .zip — o PJE entrega ZIP para autos grandes/multivolume.
       const s3Match =
-        responseHtml.match(/window\.open\('(https:\/\/[^']*s3[^']*\.pdf[^']*?)'/) ||
-        responseHtml.match(/(https:\/\/[^'"]+s3[^'"]*\.pdf[^'"]*)/);
+        responseHtml.match(/window\.open\('(https:\/\/[^']*s3[^']*\.(?:pdf|zip)[^']*?)'/) ||
+        responseHtml.match(/(https:\/\/[^'"]+s3[^'"]*\.(?:pdf|zip)[^'"]*)/);
       if (s3Match?.[1]) {
         let fileSize: number | undefined;
         try {

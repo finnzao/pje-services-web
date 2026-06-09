@@ -56,6 +56,61 @@ function resolveBaseUrl(apiBase: string): string {
   return '';
 }
 
+/** Remove a extensão conhecida (.pdf/.zip) para montar o nome-base do arquivo. */
+function stripKnownExt(name: string): string {
+  return name.replace(/\.(pdf|zip)$/i, '');
+}
+
+/**
+ * Identifica o tipo real do blob pelos primeiros bytes (magic number),
+ * independentemente da extensão informada pelo servidor.
+ *  - %PDF        → PDF
+ *  - PK\x03\x04  → ZIP (também aceita marcadores de ZIP vazio/spanned)
+ */
+async function sniffBlobKind(blob: Blob): Promise<'pdf' | 'zip' | 'other'> {
+  try {
+    const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    if (header[0] === 0x25 && header[1] === 0x50 && header[2] === 0x44 && header[3] === 0x46) {
+      return 'pdf'; // %PDF
+    }
+    if (
+      header[0] === 0x50 && header[1] === 0x4b &&
+      (header[2] === 0x03 || header[2] === 0x05 || header[2] === 0x07)
+    ) {
+      return 'zip'; // PK..
+    }
+  } catch {
+    /* ignora — cai em 'other' */
+  }
+  return 'other';
+}
+
+/**
+ * Dado o blob baixado do PJE, devolve o arquivo a salvar — SEM extração no frontend.
+ *
+ * - PDF  → 1 arquivo `.pdf`.
+ * - ZIP  → mantém o ZIP inteiro no pacote final (`<base>.zip`). A maioria dos
+ *          processos vem como ZIP grande; abrir no navegador travava a aba e
+ *          impedia a geração do ZIP final, então não extraímos aqui.
+ * - Outro → mantém como veio.
+ */
+async function expandDownloadedBlob(
+  fileName: string,
+  blob: Blob,
+): Promise<Array<{ name: string; blob: Blob }>> {
+  const kind = await sniffBlobKind(blob);
+  const base = stripKnownExt(fileName);
+
+  if (kind === 'zip') {
+    // Sem extração no frontend — o ZIP completo entra no ZIP final.
+    return [{ name: `${base}.zip`, blob }];
+  }
+
+  // Garante extensão .pdf quando identificado como PDF; senão mantém o nome original.
+  const name = kind === 'pdf' ? `${base}.pdf` : fileName;
+  return [{ name, blob }];
+}
+
 async function downloadWithFallback(
   directUrl: string,
   proxyUrl: string,
@@ -249,15 +304,38 @@ export class DownloadManager {
               signal,
             );
 
-            await this.fs.saveFile(fileName, blob);
+            // Detecta PDF x ZIP pelo conteúdo e extrai os PDFs internos quando for ZIP.
+            const saved = await expandDownloadedBlob(fileName, blob);
 
+            let totalSize = 0;
+            for (const file of saved) {
+              await this.fs.saveFile(file.name, file.blob);
+              totalSize += file.blob.size;
+            }
+
+            // A entrada "downloading" vira o primeiro arquivo realmente salvo.
             const fileEntry = this.progress.files.find(
               (f) => f.name === fileName && f.status === 'downloading',
             );
-            if (fileEntry) { fileEntry.size = blob.size; fileEntry.status = 'ok'; }
+            const first = saved[0];
+            if (fileEntry) {
+              fileEntry.name = first.name;
+              fileEntry.size = first.blob.size;
+              fileEntry.status = 'ok';
+            }
+            // Volumes extras de um ZIP entram como entradas adicionais (informativas).
+            for (let i = 1; i < saved.length; i++) {
+              this.progress.files.push({
+                name: saved[i].name,
+                size: saved[i].blob.size,
+                status: 'ok',
+                documentType,
+              });
+            }
 
+            // Cada requisição conta como 1 sucesso, mesmo que o ZIP gere vários PDFs.
             this.progress.successCount++;
-            this.progress.bytesDownloaded += blob.size;
+            this.progress.bytesDownloaded += totalSize;
           } catch (err) {
             const fileEntry = this.progress.files.find(
               (f) => f.name === fileName && f.status === 'downloading',

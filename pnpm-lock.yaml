@@ -34,7 +34,9 @@ importers:
         version: 4.4.0
       fastify:
         specifier: ^5.7.4
-        version: 5.8.2
+        version: 5.8.2      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
     devDependencies:
       '@types/node':
         specifier: ^25.2.0
