@@ -1,4 +1,5 @@
 import { FileSystemManager, buildFolderName } from './filesystem-manager';
+import type { SearchCriteria } from '../componentes/pje-download/types';
 
 export interface DownloadProgress {
   phase: 'initializing' | 'listing' | 'downloading' | 'collecting' | 'finalizing' | 'done' | 'error' | 'cancelled';
@@ -31,12 +32,14 @@ export type ProgressCallback = (progress: DownloadProgress) => void;
 export interface DownloadManagerParams {
   apiBase: string;
   sessionId: string;
-  mode: 'by_task' | 'by_tag' | 'by_number';
+  mode: 'by_task' | 'by_tag' | 'by_number' | 'by_search';
   taskName?: string;
   tagName?: string;
   tagId?: number;
   isFavorite?: boolean;
   processNumbers?: string[];
+  searchCriteria?: SearchCriteria;
+  forceZip?: boolean;
 
   documentTypes?: string[];
 }
@@ -177,7 +180,7 @@ export class DownloadManager {
       this.progress.message = 'Escolha onde salvar os processos...';
       onProgress({ ...this.progress });
 
-      const method = await this.fs.initialize();
+      const method = await this.fs.initialize({ skipPicker: params.forceZip });
 
       const folderName = buildFolderName({
         mode: params.mode,
@@ -204,6 +207,9 @@ export class DownloadManager {
       if (params.documentTypes && params.documentTypes.length > 0) {
 
         sseUrl.searchParams.set('documentTypes', params.documentTypes.join(','));
+      }
+      if (params.searchCriteria) {
+        sseUrl.searchParams.set('searchCriteria', JSON.stringify(params.searchCriteria));
       }
 
       await this.processSSE(sseUrl.toString(), params.apiBase, onProgress);
@@ -439,6 +445,7 @@ export class DownloadManager {
       `Modo: ${
         params.mode === 'by_task' ? 'Por Tarefa'
         : params.mode === 'by_tag' ? 'Por Etiqueta'
+        : params.mode === 'by_search' ? 'Pesquisa Geral'
         : 'Por Número (lista CNJ)'
       }`,
     ];

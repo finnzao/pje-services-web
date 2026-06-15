@@ -1,6 +1,6 @@
 export type EtapaWizard = 'login' | '2fa' | 'perfil' | 'download' | 'historico';
-export type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number';
-export type ServicoAtivo = 'processos' | 'advogados';
+export type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number' | 'by_search';
+export type ServicoAtivo = 'processos' | 'advogados' | 'pesquisa';
 
 export type PJEJobStatus =
   | 'pending' | 'authenticating' | 'awaiting_2fa'
@@ -50,6 +50,20 @@ export interface EntradaLog { id: number; timestamp: string; nivel: 'info' | 'wa
 
 export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
 
+export interface SearchCriteria {
+  nomeParte?: string;
+  outrosNomes?: string;
+  nomeAdvogado?: string;
+  documentoParte?: string;
+  numeroProcesso?: string;
+  numeroOAB?: string;
+  letraOAB?: string;
+  ufOAB?: string;
+  classeJudicial?: string;
+  assunto?: string;
+  numeroDocumento?: string;
+}
+
 interface StatusConfig { label: string; color: string; bg: string }
 
 export const STATUS_CONFIG: Record<PJEJobStatus, StatusConfig> = {
@@ -71,6 +85,7 @@ export const MODE_CONFIG: Record<PJEDownloadMode, { label: string; description: 
   by_task: { label: 'Por Tarefa', description: 'Baixar processos de uma tarefa' },
   by_tag: { label: 'Por Etiqueta', description: 'Baixar por etiqueta/marcador' },
   by_number: { label: 'Por Número', description: 'Baixar lista de processos por nº CNJ' },
+  by_search: { label: 'Pesquisa Geral', description: 'Baixar resultados de uma pesquisa' },
 };
 
 const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying'];

@@ -7,6 +7,8 @@ import type { ProcessoInfo, DownloadStrategy } from './strategies/download-strat
 import { ByTaskStrategy } from './strategies/by-task.strategy';
 import { ByTagStrategy } from './strategies/by-tag.strategy';
 import { ByNumberStrategy } from './strategies/by-number.strategy';
+import { BySearchStrategy } from './strategies/by-search.strategy';
+import type { PesquisaProcessoCriteria } from '../../../../shared/types';
 
 export interface ExtractResult {
   type: 'direct' | 'queued' | 'error' | 'not_available';
@@ -39,6 +41,7 @@ const strategies: Record<string, DownloadStrategy> = {
   by_task: new ByTaskStrategy(),
   by_tag: new ByTagStrategy(),
   by_number: new ByNumberStrategy(),
+  by_search: new BySearchStrategy(),
 };
 
 function sleep(ms: number): Promise<void> {
@@ -55,6 +58,7 @@ export class UrlExtractor {
       tagId?: number;
       isFavorite?: boolean;
       processNumbers?: string[];
+      searchCriteria?: PesquisaProcessoCriteria;
       onCancelled: () => boolean;
     },
   ): Promise<ProcessoInfo[]> {
@@ -69,6 +73,7 @@ export class UrlExtractor {
         tagId: params.tagId,
         isFavorite: params.isFavorite,
         processNumbers: params.processNumbers,
+        searchCriteria: params.searchCriteria,
       } as Record<string, unknown>, params.onCancelled);
 
       console.log(`[URL-EXTRACTOR] listProcesses retornou ${result.length} processos`);

@@ -31,7 +31,7 @@ function sanitizeFolderToken(s: string): string {
 }
 
 export function buildFolderName(params: {
-  mode: 'by_task' | 'by_tag' | 'by_number';
+  mode: 'by_task' | 'by_tag' | 'by_number' | 'by_search';
   taskName?: string;
   tagName?: string;
 }): string {
@@ -43,6 +43,7 @@ export function buildFolderName(params: {
     by_task: sanitizeFolderToken(params.taskName || 'Tarefa'),
     by_tag: sanitizeFolderToken(params.tagName || 'Etiqueta'),
     by_number: 'Processos_Manual',
+    by_search: 'Pesquisa',
   };
 
   return `PJE_${labels[params.mode]}_${date}_${time}`;

@@ -21,6 +21,7 @@ import { SeletorTipoDocumento } from '../../componentes/pje-download/SeletorTipo
 import { ProgressoJob } from '../../componentes/pje-download/ProgressoJob';
 import { ResultadoFinal } from '../../componentes/pje-download/ResultadoFinal';
 import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogados';
+import { TelaPesquisaGeral } from '../../componentes/pje-download/TelaPesquisaGeral';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
 import { loginPJE, enviar2FA, selecionarPerfil } from '../../componentes/pje-download/api';
@@ -459,6 +460,20 @@ export default function PaginaDownloadPJE() {
   const modosSuportados: PJEDownloadMode[] = servicoAtivo === 'advogados'
     ? ['by_task', 'by_tag']
     : ['by_task', 'by_tag', 'by_number'];
+
+  // Pesquisa Geral abre uma TELA INTEIRA dedicada (mantém toda a sessão em memória).
+  if (mostrandoDownload && servicoAtivo === 'pesquisa' && sessao.perfilSelecionado && sessao.sessionId) {
+    return (
+      <TelaPesquisaGeral
+        sessionId={sessao.sessionId}
+        perfil={sessao.perfilSelecionado}
+        usuario={sessao.usuario}
+        onVoltar={() => setServicoAtivo(null)}
+        onMudarPerfil={handleMudarPerfil}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col">

@@ -12,6 +12,7 @@ import {
   SELECIONE_SENTINEL,
   listDocumentTypes,
 } from '../../../shared/tipos-documento';
+import type { PesquisaProcessoCriteria } from '../../../shared/types';
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const CORS_ORIGIN = IS_PRODUCTION ? 'https://pje-services-web-frontend.vercel.app' : '*';
@@ -183,10 +184,11 @@ export async function streamRoutes(fastify: FastifyInstance) {
     sessionId: string; mode: string;
     taskName?: string; tagId?: string; isFavorite?: string;
     processNumbers?: string; documentTypes?: string;
+    searchCriteria?: string;
   } }>(
     '/stream-batch', async (request: FastifyRequest, reply: FastifyReply) => {
       const query = request.query as any;
-      const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes } = query;
+      const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes, searchCriteria } = query;
 
       if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
@@ -220,6 +222,12 @@ export async function streamRoutes(fastify: FastifyInstance) {
           ? documentTypes.split(',').map((t: string) => t.trim()).filter(Boolean)
           : [];
 
+        let searchCriteriaParsed: PesquisaProcessoCriteria | undefined;
+        if (searchCriteria) {
+          try { searchCriteriaParsed = JSON.parse(searchCriteria); }
+          catch { searchCriteriaParsed = undefined; }
+        }
+
         const tipoPares = expandSelectedTypes(documentTypesArray);
         const totalTipos = tipoPares.length;
 
@@ -227,6 +235,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
           taskName, tagId: tagId ? parseInt(tagId, 10) : undefined,
           isFavorite: isFavorite === 'true',
           processNumbers: processNumbersArray,
+          searchCriteria: searchCriteriaParsed,
           onCancelled: () => cancelled,
         });
 

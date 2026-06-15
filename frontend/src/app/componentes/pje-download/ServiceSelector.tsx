@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Download, FileSpreadsheet, Check } from 'lucide-react';
+import { Download, FileSpreadsheet, Search, Check } from 'lucide-react';
 import type { ServicoAtivo } from './types';
 
 interface ServicoItem {
@@ -18,6 +18,13 @@ const SERVICOS: ServicoItem[] = [
     icone: <Download size={22} />,
     titulo: 'Download de Processos',
     descricao: 'Baixe os PDFs dos processos disponíveis no PJE.',
+    accent: 'navy',
+  },
+  {
+    id: 'pesquisa',
+    icone: <Search size={22} />,
+    titulo: 'Pesquisa Geral de Processos',
+    descricao: 'Pesquise por parte, advogado, nº e baixe os resultados (ZIP).',
     accent: 'navy',
   },
   {
@@ -42,7 +49,7 @@ export function ServiceSelector({ servicoSelecionado, onSelecionar }: ServiceSel
         <span className="eyebrow">Selecione o serviço</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {SERVICOS.map((s) => {
           const on = servicoSelecionado === s.id;
           const isEmerald = s.accent === 'emerald';

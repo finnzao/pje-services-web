@@ -1,4 +1,4 @@
-export type PJEDownloadMode = 'by_number' | 'by_task' | 'by_tag';
+export type PJEDownloadMode = 'by_number' | 'by_task' | 'by_tag' | 'by_search';
 
 export interface PJECredentials { cpf: string; password: string; }
 
@@ -34,6 +34,20 @@ export interface CreateDownloadJobDTO {
 
   documentType?: string;
   pjeProfileIndex?: number;
+}
+
+export interface PesquisaProcessoCriteria {
+  nomeParte?: string;
+  outrosNomes?: string;
+  nomeAdvogado?: string;
+  documentoParte?: string;
+  numeroProcesso?: string;
+  numeroOAB?: string;
+  letraOAB?: string;
+  ufOAB?: string;
+  classeJudicial?: string;
+  assunto?: string;
+  numeroDocumento?: string;
 }
 
 export interface Submit2FADTO { code: string; }
