@@ -1,5 +1,6 @@
 import type { DownloadStrategy, ProcessoInfo } from './download-strategy';
 import { pjeApiPost, pjeApiGet, type PjeSession } from '../../../../../shared/pje-api-client';
+import { buscarProcessoPorNumero } from '../consulta-publica';
 
 const CNJ_PATTERN = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
 const PAGE_SIZE = 30;
@@ -77,13 +78,29 @@ export class ByNumberStrategy implements DownloadStrategy {
     for (const numero of numeros) {
       if (onCancelled()) break;
 
-      const encontrado = await this.descobrirProcesso(session, numero);
+      let encontrado = await this.descobrirProcesso(session, numero);
+
+      if (!encontrado) {
+        try {
+          const viaPesquisa = await buscarProcessoPorNumero(session, numero);
+          if (viaPesquisa) {
+            encontrado = {
+              idProcesso: viaPesquisa.idProcesso,
+              numeroProcesso: viaPesquisa.numeroProcesso,
+            };
+            console.log(`[BY_NUMBER] ${numero} encontrado via Pesquisa Geral → idProcesso=${encontrado.idProcesso}`);
+          }
+        } catch (err) {
+          console.warn(`[BY_NUMBER] Fallback Pesquisa Geral falhou para ${numero}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+
       if (encontrado) {
         resultados.push(encontrado);
         console.log(`[BY_NUMBER] ✓ ${numero} → idProcesso=${encontrado.idProcesso}, idTaskInstance=${encontrado.idTaskInstance ?? 'none'}`);
       } else {
         naoEncontrados.push(numero);
-        console.warn(`[BY_NUMBER] ✗ ${numero}: não encontrado no painel`);
+        console.warn(`[BY_NUMBER] ✗ ${numero}: não encontrado no painel nem na Pesquisa Geral`);
       }
     }
 

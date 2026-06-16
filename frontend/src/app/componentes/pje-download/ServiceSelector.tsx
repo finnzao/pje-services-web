@@ -21,18 +21,18 @@ const SERVICOS: ServicoItem[] = [
     accent: 'navy',
   },
   {
-    id: 'pesquisa',
-    icone: <Search size={22} />,
-    titulo: 'Pesquisa Geral de Processos',
-    descricao: 'Pesquise por parte, advogado, nº e baixe os resultados (ZIP).',
-    accent: 'navy',
-  },
-  {
     id: 'advogados',
     icone: <FileSpreadsheet size={22} />,
     titulo: 'Planilha de Advogados',
     descricao: 'Gere uma planilha com os advogados de cada processo.',
     accent: 'emerald',
+  },
+  {
+    id: 'pesquisa',
+    icone: <Search size={22} />,
+    titulo: 'Pesquisa Geral de Processos',
+    descricao: 'Pesquise na Consulta Processual e baixe ou gere planilha.',
+    accent: 'navy',
   },
 ];
 

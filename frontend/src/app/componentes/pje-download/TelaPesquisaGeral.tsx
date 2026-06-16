@@ -1,34 +1,27 @@
 'use client';
 
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  ArrowLeft, Search, Landmark, UserCog, LogOut,
-  FileArchive, AlertCircle, Loader2, CheckCircle, X,
+  Search, Download, FileSpreadsheet, Loader2, AlertCircle,
+  CheckCircle, X, HardDrive, FileArchive,
 } from 'lucide-react';
-import type { PerfilPJE, UsuarioPJE, SearchCriteria } from './types';
-import { FormularioPesquisa } from './FormularioPesquisa';
-import { SeletorTipoDocumento } from './SeletorTipoDocumento';
-import { ProfileBadge } from './ProfileBadge';
-import { ResultadoFinal } from './ResultadoFinal';
+import type { PerfilPJE, SearchCriteria, SearchFormOptions } from './types';
+import { FormularioPesquisa, nomePartePendente, nomeAdvogadoPendente, temAlgumCriterio } from './FormularioPesquisa';
+import { obterOpcoesPesquisa } from './api-pesquisa';
+import { FileSystemManager } from '../../lib/filesystem-manager';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
-import { API_BASE } from '../../lib/api-client';
+import { PlanilhaPesquisaManager, type PesquisaProgress } from '../../lib/planilha-pesquisa';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
+type Acao = 'download' | 'planilha';
 
 interface TelaPesquisaGeralProps {
-  sessionId: string;
   perfil: PerfilPJE;
-  usuario?: UsuarioPJE;
-  onVoltar: () => void;
-  onMudarPerfil: () => void;
-  onLogout: () => void;
+  sessionId: string;
 }
 
-type ResultStatus = 'success' | 'partial' | 'failed' | 'cancelled';
-interface ResultState {
-  status: ResultStatus;
-  titulo: string;
-  mensagem: string;
-  resumo: { total: number; sucesso: number; falhas: number; notAvailable?: number; bytesTotal?: number };
-}
+const OPCOES_VAZIAS: SearchFormOptions = { ufOab: [], jurisdicoes: [], orgaosJulgadores: [] };
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -36,251 +29,241 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const TITULO_POR_STATUS: Record<ResultStatus, string> = {
-  success: 'Download concluído com sucesso!',
-  partial: 'Download concluído parcialmente',
-  failed: 'Falha no download',
-  cancelled: 'Pesquisa cancelada',
-};
-
-export function TelaPesquisaGeral({
-  sessionId, perfil, usuario, onVoltar, onMudarPerfil, onLogout,
-}: TelaPesquisaGeralProps) {
-  const [criterios, setCriterios] = useState<SearchCriteria>({});
-  const [tiposSelecionados, setTiposSelecionados] = useState<string[]>([]);
-  const [progress, setProgress] = useState<DownloadProgress | null>(null);
-  const [resultado, setResultado] = useState<ResultState | null>(null);
+export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps) {
+  const [acao, setAcao] = useState<Acao>('planilha');
+  const [criteria, setCriteria] = useState<SearchCriteria>({});
+  const [opcoes, setOpcoes] = useState<SearchFormOptions>(OPCOES_VAZIAS);
+  const [carregandoOpcoes, setCarregandoOpcoes] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const managerRef = useRef<DownloadManager | null>(null);
 
-  const temCriterio = useMemo(
-    () => Object.values(criterios).some((v) => typeof v === 'string' && v.trim().length > 0),
-    [criterios],
-  );
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const [planilhaProgress, setPlanilhaProgress] = useState<PesquisaProgress | null>(null);
 
-  const isActive = !!progress && !['done', 'error', 'cancelled'].includes(progress.phase);
-  const numTipos = tiposSelecionados.filter((t) => t && t !== 'Selecione').length;
+  const downloadRef = useRef<DownloadManager | null>(null);
+  const planilhaRef = useRef<PlanilhaPesquisaManager | null>(null);
 
-  const pct = progress && (progress.totalRequests || progress.totalProcesses) > 0
-    ? Math.round(((progress.successCount + progress.failedCount + progress.notAvailableCount) /
-        (progress.totalRequests || progress.totalProcesses)) * 100)
-    : 0;
+  const fsApiSupported = typeof window !== 'undefined' && FileSystemManager?.isSupported?.();
 
-  const handleBuscar = useCallback(async () => {
-    if (!temCriterio) return;
+  useEffect(() => {
+    let ativo = true;
+    setCarregandoOpcoes(true);
+    obterOpcoesPesquisa(sessionId)
+      .then((data) => { if (ativo) setOpcoes(data || OPCOES_VAZIAS); })
+      .catch(() => { if (ativo) setOpcoes(OPCOES_VAZIAS); })
+      .finally(() => { if (ativo) setCarregandoOpcoes(false); });
+    return () => { ativo = false; };
+  }, [sessionId]);
+
+  const downloadAtivo = downloadProgress && !['done', 'error', 'cancelled'].includes(downloadProgress.phase);
+  const planilhaAtiva = planilhaProgress && !['done', 'error', 'cancelled'].includes(planilhaProgress.phase);
+  const ocupado = !!(downloadAtivo || planilhaAtiva);
+
+  const bloqueado = useMemo(() => {
+    if (nomePartePendente(criteria)) return 'A pesquisa por Nome da Parte deve conter pelo menos duas palavras.';
+    if (nomeAdvogadoPendente(criteria)) return 'A pesquisa por Nome do Representante deve conter pelo menos duas palavras.';
+    if (!temAlgumCriterio(criteria)) return 'Informe ao menos um critério de pesquisa.';
+    return null;
+  }, [criteria]);
+
+  const podeSubmit = !bloqueado && !ocupado;
+
+  const handleDownload = useCallback(async () => {
     setErro(null);
-    setResultado(null);
-    setProgress(null);
-
+    setDownloadProgress(null);
     const manager = new DownloadManager();
-    managerRef.current = manager;
-
+    downloadRef.current = manager;
     const params: DownloadManagerParams = {
       apiBase: API_BASE,
       sessionId,
       mode: 'by_search',
-      searchCriteria: criterios,
-      forceZip: true,
-      documentTypes: tiposSelecionados.length > 0 ? tiposSelecionados : undefined,
+      searchCriteria: criteria,
     };
-
-    let final: DownloadProgress | null = null;
     try {
-      await manager.execute(params, (p) => { final = { ...p }; setProgress(final); });
+      await manager.execute(params, (p) => setDownloadProgress({ ...p }));
     } catch (err: any) {
       setErro(err?.message || 'Erro inesperado');
-      return;
     }
+  }, [criteria, sessionId]);
 
-    if (final) {
-      const fp = final as DownloadProgress;
-      const status: ResultStatus =
-        fp.phase === 'cancelled' ? 'cancelled'
-        : fp.phase === 'error' ? 'failed'
-        : fp.failedCount === 0 ? 'success'
-        : fp.successCount === 0 ? 'failed'
-        : 'partial';
-      setResultado({
-        status,
-        titulo: TITULO_POR_STATUS[status],
-        mensagem: fp.message,
-        resumo: {
-          total: fp.totalRequests || fp.totalProcesses,
-          sucesso: fp.successCount,
-          falhas: fp.failedCount,
-          notAvailable: fp.notAvailableCount,
-          bytesTotal: fp.bytesDownloaded,
-        },
-      });
-    }
-  }, [temCriterio, criterios, tiposSelecionados, sessionId]);
-
-  const handleCancelar = useCallback(() => { managerRef.current?.cancel(); }, []);
-
-  const handleNovaPesquisa = useCallback(() => {
-    managerRef.current?.cancel();
-    managerRef.current = null;
-    setCriterios({});
-    setTiposSelecionados([]);
-    setProgress(null);
-    setResultado(null);
+  const handlePlanilha = useCallback(async () => {
     setErro(null);
+    setPlanilhaProgress(null);
+    const manager = new PlanilhaPesquisaManager();
+    planilhaRef.current = manager;
+    try {
+      await manager.execute({ apiBase: API_BASE, sessionId, criteria }, (p) => setPlanilhaProgress({ ...p }));
+    } catch (err: any) {
+      setErro(err?.message || 'Erro inesperado');
+    }
+  }, [criteria, sessionId]);
+
+  const handleSubmit = useCallback(() => {
+    if (!podeSubmit) return;
+    if (acao === 'download') handleDownload();
+    else handlePlanilha();
+  }, [podeSubmit, acao, handleDownload, handlePlanilha]);
+
+  const handleCancelar = useCallback(() => {
+    downloadRef.current?.cancel();
+    planilhaRef.current?.cancel();
   }, []);
 
-  return (
-    <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-30 bg-gradient-to-r from-navy-900 via-navy-800 to-navy-700 text-white shadow-lg shadow-navy-900/20">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-3.5">
-            <button
-              type="button" onClick={onVoltar} disabled={isActive}
-              title={isActive ? 'Aguarde a conclusão' : 'Voltar aos serviços'}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-white/90 transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-brass-300 ring-1 ring-white/15 backdrop-blur">
-              <Search size={20} />
-            </span>
-            <div className="leading-tight">
-              <h1 className="font-display text-xl font-semibold tracking-tight text-white">Pesquisa Geral de Processos</h1>
-              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-navy-200">PJE · TJBA</p>
-            </div>
-          </div>
+  const dpct = downloadProgress
+    ? (downloadProgress.totalRequests || downloadProgress.totalProcesses) > 0
+      ? Math.round(((downloadProgress.successCount + downloadProgress.failedCount + downloadProgress.notAvailableCount) / (downloadProgress.totalRequests || downloadProgress.totalProcesses)) * 100)
+      : 0
+    : 0;
 
-          <div className="flex items-center gap-2">
-            {usuario && <span className="mr-1 hidden text-xs text-navy-200 sm:inline">{usuario.nomeUsuario}</span>}
-            {!isActive && (
-              <button type="button" onClick={onMudarPerfil}
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white/90 transition-colors hover:bg-white/15">
-                <UserCog size={14} /> <span className="hidden sm:inline">Perfil</span>
+  const ppct = planilhaProgress && planilhaProgress.total > 0
+    ? Math.round((planilhaProgress.collected / planilhaProgress.total) * 100)
+    : 0;
+
+  return (
+    <div>
+      <div className="mb-6 flex items-center gap-2">
+        <span className="num-badge">1</span>
+        <span className="eyebrow">O que deseja fazer</span>
+      </div>
+
+      <div className="mb-8 grid gap-2.5 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setAcao('planilha')}
+          disabled={ocupado}
+          className={`pick group p-4 ${acao === 'planilha' ? 'pick-on' : ''}`}
+        >
+          <span className={`mb-2 inline-flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${acao === 'planilha' ? 'bg-emerald-700 text-white' : 'bg-emerald-50 text-emerald-700'}`}>
+            <FileSpreadsheet size={18} />
+          </span>
+          <span className="block text-sm font-semibold text-ink">Gerar planilha de resultados</span>
+          <span className="mt-0.5 block text-xs text-slate-500">Inclui a coluna “Nó(s) atual(is)”.</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setAcao('download')}
+          disabled={ocupado}
+          className={`pick group p-4 ${acao === 'download' ? 'pick-on' : ''}`}
+        >
+          <span className={`mb-2 inline-flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${acao === 'download' ? 'bg-navy-800 text-white' : 'bg-navy-50 text-navy-700'}`}>
+            <Download size={18} />
+          </span>
+          <span className="block text-sm font-semibold text-ink">Baixar processos</span>
+          <span className="mt-0.5 block text-xs text-slate-500">PDFs dos processos encontrados.</span>
+        </button>
+      </div>
+
+      <div className="mb-6 border-b border-slate-100 pb-2">
+        <div className="mb-4 flex items-center gap-2">
+          <span className="num-badge">2</span>
+          <span className="eyebrow">Critérios de pesquisa</span>
+        </div>
+        <FormularioPesquisa
+          criteria={criteria}
+          onChange={setCriteria}
+          opcoes={opcoes}
+          carregandoOpcoes={carregandoOpcoes}
+          desabilitado={ocupado}
+        />
+      </div>
+
+      {erro && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
+          <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
+          <span>{erro}</span>
+        </div>
+      )}
+
+      {acao === 'download' && downloadProgress && (
+        <div className={`mb-6 rounded-2xl border p-4 ${
+          downloadProgress.phase === 'done' ? 'border-emerald-200 bg-emerald-50' :
+          ['error', 'cancelled'].includes(downloadProgress.phase) ? 'border-red-200 bg-red-50' :
+          'border-navy-200 bg-navy-50'
+        }`}>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              {downloadProgress.phase === 'done' ? <CheckCircle size={16} className="text-emerald-600" /> :
+               ['error', 'cancelled'].includes(downloadProgress.phase) ? <AlertCircle size={16} className="text-red-600" /> :
+               <Loader2 size={16} className="animate-spin text-navy-600" />}
+              <span className="truncate text-sm font-semibold text-ink">{downloadProgress.message}</span>
+            </div>
+            {downloadAtivo && (
+              <button type="button" onClick={handleCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
+                <X size={14} /> Cancelar
               </button>
             )}
-            <button type="button" onClick={onLogout} disabled={isActive}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white/90 transition-colors hover:border-red-300/40 hover:bg-red-500/15 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40">
-              <LogOut size={14} /> <span className="hidden sm:inline">Sair</span>
-            </button>
           </div>
-        </div>
-        <div className="h-[3px] w-full bg-gradient-to-r from-brass-400/0 via-brass-400/70 to-brass-400/0" />
-      </header>
-
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
-        <div className="surface p-6 sm:p-7 animate-rise">
-          {!resultado && (
-            <div className="mb-6 border-b border-slate-100 pb-4">
-              <ProfileBadge perfil={perfil} />
-            </div>
-          )}
-
-          {resultado ? (
-            <ResultadoFinal
-              status={resultado.status}
-              titulo={resultado.titulo}
-              mensagem={resultado.mensagem}
-              resumo={resultado.resumo}
-              tipoServico="processos"
-              onNovaTarefa={handleNovaPesquisa}
-              onMudarPerfil={onMudarPerfil}
-              onLogout={onLogout}
-            />
-          ) : (
+          {downloadAtivo && (downloadProgress.totalRequests || downloadProgress.totalProcesses) > 0 && (
             <>
-              {erro && (
-                <div className="mb-6 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
-                  <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
-                  <span>{erro}</span>
-                </div>
-              )}
-
-              {progress && (
-                <div className={`mb-6 rounded-2xl border p-4 animate-fade ${
-                  progress.phase === 'done' ? 'border-emerald-200 bg-emerald-50'
-                  : progress.phase === 'error' || progress.phase === 'cancelled' ? 'border-red-200 bg-red-50'
-                  : 'border-navy-200 bg-navy-50'
-                }`}>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {progress.phase === 'done' ? <CheckCircle size={16} className="text-emerald-600" />
-                        : progress.phase === 'error' || progress.phase === 'cancelled' ? <AlertCircle size={16} className="text-red-600" />
-                        : <Loader2 size={16} className="animate-spin text-navy-600" />}
-                      <span className="truncate text-sm font-semibold text-ink">{progress.message}</span>
-                    </div>
-                    {isActive && (
-                      <button type="button" onClick={handleCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
-                        <X size={14} /> Cancelar
-                      </button>
-                    )}
-                  </div>
-
-                  {isActive && (progress.totalRequests || progress.totalProcesses) > 0 && (
-                    <>
-                      <div className="progress-track mb-1"><div className="progress-bar bg-navy-700" style={{ width: `${Math.min(pct, 100)}%` }} /></div>
-                      <div className="flex justify-between text-xs text-slate-500">
-                        <span>{progress.successCount + progress.failedCount}/{progress.totalRequests || progress.totalProcesses}</span>
-                        <span>{formatBytes(progress.bytesDownloaded)}</span>
-                      </div>
-                    </>
-                  )}
-
-                  {progress.files.length > 0 && (
-                    <div className="scroll-area mt-3 max-h-32 overflow-y-auto">
-                      {progress.files.slice(-8).reverse().map((f, i) => (
-                        <div key={`${f.name}-${i}`} className="flex items-center gap-2 py-0.5 text-xs">
-                          {f.status === 'ok' && <CheckCircle size={11} className="text-emerald-500" />}
-                          {f.status === 'downloading' && <Loader2 size={11} className="animate-spin text-navy-500" />}
-                          {f.status === 'error' && <X size={11} className="text-red-500" />}
-                          {f.status === 'not_available' && <AlertCircle size={11} className="text-brass-500" />}
-                          <span className={`truncate ${f.status === 'error' ? 'text-red-600' : f.status === 'not_available' ? 'text-brass-600' : 'text-slate-600'}`}>{f.name}</span>
-                          {f.size > 0 && <span className="flex-shrink-0 text-slate-400">{formatBytes(f.size)}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!isActive && (
-                <div className="space-y-8">
-                  <FormularioPesquisa criterios={criterios} onChange={setCriterios} />
-
-                  <div>
-                    <div className="mb-3 flex items-center gap-2">
-                      <span className="num-badge">2</span>
-                      <span className="eyebrow">Tipos de documento</span>
-                    </div>
-                    <SeletorTipoDocumento selecionados={tiposSelecionados} onChange={setTiposSelecionados} />
-                  </div>
-
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs text-slate-500">
-                    <FileArchive size={13} /> Todos os processos encontrados serão entregues em um arquivo ZIP.
-                  </div>
-
-                  <div className="sticky bottom-0 -mx-6 border-t border-slate-200 bg-white/85 px-6 py-4 backdrop-blur-md sm:-mx-7 sm:px-7">
-                    <button
-                      type="button" onClick={handleBuscar} disabled={!temCriterio}
-                      className={`btn w-full py-3.5 text-sm ${temCriterio ? 'btn-primary' : 'cursor-not-allowed bg-slate-200 text-slate-400'}`}
-                    >
-                      <Search size={16} />
-                      {`Pesquisar e baixar resultados${numTipos > 0 ? ` × ${numTipos} tipo(s)` : ''} (ZIP)`}
-                    </button>
-                    {!temCriterio && (
-                      <div className="mt-2 flex items-center justify-center gap-1.5">
-                        <AlertCircle size={12} className="text-slate-400" />
-                        <p className="text-xs text-slate-400">Preencha ao menos um critério de pesquisa</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div className="progress-track mb-1"><div className="progress-bar bg-navy-700" style={{ width: `${dpct}%` }} /></div>
+              <div className="flex justify-between text-xs text-slate-500">
+                <span>{downloadProgress.successCount + downloadProgress.failedCount}/{downloadProgress.totalRequests || downloadProgress.totalProcesses}</span>
+                <span>{formatBytes(downloadProgress.bytesDownloaded)}</span>
+              </div>
             </>
           )}
         </div>
-      </main>
+      )}
 
-      <footer className="border-t border-slate-200/70 py-6">
-        <p className="text-center text-xs text-slate-400">Sistema interno de apoio ao PJE/TJBA · {new Date().getFullYear()}</p>
-      </footer>
+      {acao === 'planilha' && planilhaProgress && (
+        <div className={`mb-6 rounded-2xl border p-4 ${
+          planilhaProgress.phase === 'done' ? 'border-emerald-200 bg-emerald-50' :
+          ['error', 'cancelled'].includes(planilhaProgress.phase) ? 'border-red-200 bg-red-50' :
+          'border-emerald-200 bg-emerald-50/60'
+        }`}>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              {planilhaProgress.phase === 'done' ? <CheckCircle size={16} className="text-emerald-600" /> :
+               ['error', 'cancelled'].includes(planilhaProgress.phase) ? <AlertCircle size={16} className="text-red-600" /> :
+               <Loader2 size={16} className="animate-spin text-emerald-600" />}
+              <span className="truncate text-sm font-semibold text-ink">{planilhaProgress.message}</span>
+            </div>
+            {planilhaAtiva && (
+              <button type="button" onClick={handleCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
+                <X size={14} /> Cancelar
+              </button>
+            )}
+          </div>
+          {planilhaAtiva && planilhaProgress.total > 0 && (
+            <>
+              <div className="progress-track mb-1"><div className="progress-bar bg-emerald-600" style={{ width: `${ppct}%` }} /></div>
+              <div className="flex justify-between text-xs text-slate-500">
+                <span>{planilhaProgress.collected}/{planilhaProgress.total} processos</span>
+                <span>{ppct}%</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {acao === 'download' && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs text-slate-500">
+          {fsApiSupported
+            ? <><HardDrive size={13} /> Os PDFs serão salvos direto no seu computador.</>
+            : <><FileArchive size={13} /> Os PDFs serão empacotados em um ZIP para download.</>}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={!podeSubmit}
+        className={`btn w-full py-3.5 text-sm ${podeSubmit ? (acao === 'planilha' ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-400'}`}
+      >
+        {ocupado ? <Loader2 size={16} className="animate-spin" /> : acao === 'planilha' ? <FileSpreadsheet size={16} /> : <Download size={16} />}
+        {ocupado ? 'Processando…' : acao === 'planilha' ? 'Gerar planilha' : 'Baixar processos'}
+      </button>
+
+      {bloqueado && !ocupado && (
+        <div className="mt-2 flex items-center justify-center gap-1.5">
+          <AlertCircle size={12} className="text-slate-400" />
+          <p className="text-xs text-slate-400">{bloqueado}</p>
+        </div>
+      )}
+
+      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+        <Search size={12} /> Perfil: {perfil.nome}
+      </p>
     </div>
   );
 }

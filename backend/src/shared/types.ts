@@ -29,25 +29,9 @@ export interface CreateDownloadJobDTO {
   mode: PJEDownloadMode; credentials: PJECredentials;
   processNumbers?: string[]; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string;
-
   documentTypes?: string[];
-
   documentType?: string;
   pjeProfileIndex?: number;
-}
-
-export interface PesquisaProcessoCriteria {
-  nomeParte?: string;
-  outrosNomes?: string;
-  nomeAdvogado?: string;
-  documentoParte?: string;
-  numeroProcesso?: string;
-  numeroOAB?: string;
-  letraOAB?: string;
-  ufOAB?: string;
-  classeJudicial?: string;
-  assunto?: string;
-  numeroDocumento?: string;
 }
 
 export interface Submit2FADTO { code: string; }
@@ -78,7 +62,6 @@ export interface GerarPlanilhaAdvogadosDTO {
   credentials: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag'; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string; pjeProfileIndex?: number; pjeSessionId?: string;
-
   filtro?: FiltroAdvogado;
   filtros?: FiltroAdvogado[];
 }
@@ -93,4 +76,55 @@ export interface PlanilhaAdvogadosResult {
   jobId: string; totalProcesses: number; processedCount: number; filteredCount: number;
   fileName?: string; filePath?: string;
   errors: Array<{ processo: string; message: string }>;
+}
+
+export interface PesquisaProcessoCriteria {
+  nomeParte?: string;
+  outrosNomes?: string;
+  nomeAdvogado?: string;
+  numeroSequencial?: string;
+  numeroDigito?: string;
+  numeroAno?: string;
+  numeroTribunal?: string;
+  numeroOrgao?: string;
+  documentoParte?: string;
+  assunto?: string;
+  classeJudicial?: string;
+  numeroDocumento?: string;
+  numeroOAB?: string;
+  letraOAB?: string;
+  ufOAB?: string;
+  jurisdicao?: string;
+  orgaoJulgador?: string;
+  dataAutuacaoInicio?: string;
+  dataAutuacaoFim?: string;
+  valorCausaInicial?: string;
+  valorCausaFinal?: string;
+}
+
+export interface ComboOption {
+  value: string;
+  label: string;
+}
+
+export interface SearchFormOptions {
+  ufOab: ComboOption[];
+  jurisdicoes: ComboOption[];
+  orgaosJulgadores: ComboOption[];
+}
+
+export interface SearchResultRow {
+  idProcesso: string;
+  numeroProcesso: string;
+  caracteristicas: string;
+  orgaoJulgador: string;
+  juizGarantias: string;
+  autuadoEm: string;
+  classeJudicial: string;
+  poloAtivo: string;
+  poloPassivo: string;
+  noAtual: string;
+  ultimaMovimentacao: string;
+  nosContainer: string;
+  nosSingle: string;
 }

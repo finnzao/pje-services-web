@@ -12,6 +12,12 @@ import {
   SELECIONE_SENTINEL,
   listDocumentTypes,
 } from '../../../shared/tipos-documento';
+import {
+  consultaFetchForm, consultaPost, extractViewState, validateCriteria,
+  buildSearchBody, buildPaginationBody, buildNosAtuaisBody,
+  parseResultRowsFull, parseResultCount, parseNosAtuais, parseFormOptions,
+  RESULTS_PER_PAGE, MAX_RESULTS,
+} from '../services/download/consulta-publica';
 import type { PesquisaProcessoCriteria } from '../../../shared/types';
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -21,6 +27,7 @@ const PARALLEL_SLOTS = 3;
 const REQUEST_STAGGER_MS = 500;
 const MAX_STREAMS_PER_USER = 1;
 const MAX_STREAMS_GLOBAL = 5;
+const NOS_STAGGER_MS = 200;
 
 const activeStreams = new Map<string, { count: number; startedAt: number }>();
 
@@ -39,7 +46,6 @@ async function validatePjeSession(session: any): Promise<boolean> {
     if (!ct.includes('json')) return false;
     const user = await res.json() as any;
     if (!user?.idUsuario || user.idUsuario === 0) return false;
-    // Persiste o idUsuario real na sessão: recuperarDownloadsDisponiveis exige idUsuario (não idUsuarioLocalizacao)
     session.idUsuario = user.idUsuario;
     return true;
   } catch { return false; }
@@ -110,7 +116,6 @@ async function processOneRequest(
     }
 
     if (result.type === 'not_available') {
-
       send('not_available', {
         processNumber: proc.numeroProcesso,
         documentType: isAllTypes ? null : documentTypeName,
@@ -173,6 +178,11 @@ async function collectPending(
   return { success, failed };
 }
 
+function parseCriteriaQuery(raw: string | undefined): PesquisaProcessoCriteria {
+  if (!raw) return {};
+  try { return JSON.parse(raw) as PesquisaProcessoCriteria; } catch { return {}; }
+}
+
 export async function streamRoutes(fastify: FastifyInstance) {
 
   fastify.get('/document-types', async (_request, reply) => {
@@ -180,15 +190,31 @@ export async function streamRoutes(fastify: FastifyInstance) {
     reply.status(200).send({ success: true, data: types });
   });
 
+  fastify.get<{ Querystring: { sessionId: string } }>(
+    '/search-form-options', async (request: FastifyRequest, reply: FastifyReply) => {
+      const { sessionId } = request.query as any;
+      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
+      const session = sessionStore.get(sessionId);
+      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada.', statusCode: 401 } });
+      try {
+        const html = await consultaFetchForm(session as any);
+        const options = parseFormOptions(html);
+        reply.status(200).send({ success: true, data: options });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Erro ao carregar formulário';
+        reply.status(502).send({ success: false, error: { code: 'FORM_ERROR', message: msg, statusCode: 502 } });
+      }
+    },
+  );
+
   fastify.get<{ Querystring: {
     sessionId: string; mode: string;
     taskName?: string; tagId?: string; isFavorite?: string;
-    processNumbers?: string; documentTypes?: string;
-    searchCriteria?: string;
+    processNumbers?: string; documentTypes?: string; criteria?: string;
   } }>(
     '/stream-batch', async (request: FastifyRequest, reply: FastifyReply) => {
       const query = request.query as any;
-      const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes, searchCriteria } = query;
+      const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes, criteria } = query;
 
       if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
@@ -222,12 +248,6 @@ export async function streamRoutes(fastify: FastifyInstance) {
           ? documentTypes.split(',').map((t: string) => t.trim()).filter(Boolean)
           : [];
 
-        let searchCriteriaParsed: PesquisaProcessoCriteria | undefined;
-        if (searchCriteria) {
-          try { searchCriteriaParsed = JSON.parse(searchCriteria); }
-          catch { searchCriteriaParsed = undefined; }
-        }
-
         const tipoPares = expandSelectedTypes(documentTypesArray);
         const totalTipos = tipoPares.length;
 
@@ -235,7 +255,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
           taskName, tagId: tagId ? parseInt(tagId, 10) : undefined,
           isFavorite: isFavorite === 'true',
           processNumbers: processNumbersArray,
-          searchCriteria: searchCriteriaParsed,
+          searchCriteria: parseCriteriaQuery(criteria),
           onCancelled: () => cancelled,
         });
 
@@ -304,6 +324,119 @@ export async function streamRoutes(fastify: FastifyInstance) {
           totalRequests: requestIndex,
           success, failed, queued: 0, notAvailable, elapsed,
         });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Erro fatal';
+        send('fatal', { message: msg });
+      } finally {
+        try { reply.raw.end(); } catch {  }
+        releaseStream(userId);
+      }
+    },
+  );
+
+  fastify.get<{ Querystring: { sessionId: string; criteria?: string } }>(
+    '/search-sheet-stream', async (request: FastifyRequest, reply: FastifyReply) => {
+      const { sessionId, criteria } = request.query as any;
+
+      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
+      const session = sessionStore.get(sessionId);
+      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada.', statusCode: 401 } });
+
+      const sessionValid = await validatePjeSession(session);
+      if (!sessionValid) { sessionStore.delete(sessionId); return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada no servidor.', statusCode: 401 } }); }
+
+      const userId = session.cpf || sessionId.slice(0, 16);
+      let totalActive = 0;
+      for (const entry of activeStreams.values()) totalActive += entry.count;
+      if (totalActive >= MAX_STREAMS_GLOBAL) return reply.status(429).send({ success: false, error: { code: 'SERVER_BUSY', message: 'Servidor ocupado.', statusCode: 429 } });
+      const userEntry = activeStreams.get(userId);
+      if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem uma operação em andamento.', statusCode: 429 } });
+      activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
+
+      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': CORS_ORIGIN });
+      const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {  } };
+      let cancelled = false;
+      request.raw.on('close', () => { cancelled = true; releaseStream(userId); });
+
+      try {
+        const criterios = parseCriteriaQuery(criteria);
+        const validacao = validateCriteria(criterios);
+        if (!validacao.ok) {
+          send('fatal', { message: validacao.error || 'Critérios inválidos.' });
+          reply.raw.end();
+          releaseStream(userId);
+          return;
+        }
+
+        const formHtml = await consultaFetchForm(session as any);
+        const formViewState = extractViewState(formHtml) || 'j_id38';
+
+        const firstHtml = await consultaPost(session as any, buildSearchBody(criterios, formViewState));
+        const resultsViewState = extractViewState(firstHtml) || formViewState;
+        const total = Math.min(parseResultCount(firstHtml) || 0, MAX_RESULTS);
+
+        const seen = new Set<string>();
+        const linhas = parseResultRowsFull(firstHtml).filter((r) => {
+          if (!r.idProcesso || seen.has(r.idProcesso)) return false;
+          seen.add(r.idProcesso);
+          return true;
+        });
+
+        const totalPages = total > 0 ? Math.ceil(total / RESULTS_PER_PAGE) : 1;
+        for (let page = 2; page <= totalPages; page++) {
+          if (cancelled) break;
+          const html = await consultaPost(session as any, buildPaginationBody(criterios, resultsViewState, page));
+          const novas = parseResultRowsFull(html).filter((r) => {
+            if (!r.idProcesso || seen.has(r.idProcesso)) return false;
+            seen.add(r.idProcesso);
+            return true;
+          });
+          if (novas.length === 0) break;
+          linhas.push(...novas);
+          await sleep(300);
+        }
+
+        send('listing', { total: linhas.length, parallelSlots: PARALLEL_SLOTS });
+
+        if (linhas.length === 0 || cancelled) {
+          send('done', { total: linhas.length });
+          reply.raw.end();
+          releaseStream(userId);
+          return;
+        }
+
+        const pool = new ParallelPool(PARALLEL_SLOTS);
+        let emitted = 0;
+
+        for (let i = 0; i < linhas.length; i++) {
+          if (cancelled) break;
+          const linha = linhas[i];
+          if (i > 0) await sleep(NOS_STAGGER_MS);
+          await pool.add(async () => {
+            let noAtual = '';
+            try {
+              const body = buildNosAtuaisBody(criterios, resultsViewState, linha.idProcesso, linha.nosContainer, linha.nosSingle);
+              const respHtml = await consultaPost(session as any, body);
+              noAtual = parseNosAtuais(respHtml);
+            } catch {  }
+            emitted++;
+            send('row', {
+              index: emitted,
+              total: linhas.length,
+              numeroProcesso: linha.numeroProcesso,
+              orgaoJulgador: linha.orgaoJulgador,
+              autuadoEm: linha.autuadoEm,
+              classeJudicial: linha.classeJudicial,
+              poloAtivo: linha.poloAtivo,
+              poloPassivo: linha.poloPassivo,
+              noAtual,
+              ultimaMovimentacao: linha.ultimaMovimentacao,
+            });
+          });
+        }
+
+        await pool.drain();
+        send('done', { total: linhas.length });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Erro fatal';
         send('fatal', { message: msg });

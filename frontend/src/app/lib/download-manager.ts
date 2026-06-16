@@ -38,10 +38,9 @@ export interface DownloadManagerParams {
   tagId?: number;
   isFavorite?: boolean;
   processNumbers?: string[];
-  searchCriteria?: SearchCriteria;
-  forceZip?: boolean;
 
   documentTypes?: string[];
+  searchCriteria?: SearchCriteria;
 }
 
 const MAX_CONCURRENT_FILE_DOWNLOADS = 3;
@@ -59,44 +58,27 @@ function resolveBaseUrl(apiBase: string): string {
   return '';
 }
 
-/** Remove a extensão conhecida (.pdf/.zip) para montar o nome-base do arquivo. */
 function stripKnownExt(name: string): string {
   return name.replace(/\.(pdf|zip)$/i, '');
 }
 
-/**
- * Identifica o tipo real do blob pelos primeiros bytes (magic number),
- * independentemente da extensão informada pelo servidor.
- *  - %PDF        → PDF
- *  - PK\x03\x04  → ZIP (também aceita marcadores de ZIP vazio/spanned)
- */
 async function sniffBlobKind(blob: Blob): Promise<'pdf' | 'zip' | 'other'> {
   try {
     const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
     if (header[0] === 0x25 && header[1] === 0x50 && header[2] === 0x44 && header[3] === 0x46) {
-      return 'pdf'; // %PDF
+      return 'pdf';
     }
     if (
       header[0] === 0x50 && header[1] === 0x4b &&
       (header[2] === 0x03 || header[2] === 0x05 || header[2] === 0x07)
     ) {
-      return 'zip'; // PK..
+      return 'zip';
     }
   } catch {
-    /* ignora — cai em 'other' */
   }
   return 'other';
 }
 
-/**
- * Dado o blob baixado do PJE, devolve o arquivo a salvar — SEM extração no frontend.
- *
- * - PDF  → 1 arquivo `.pdf`.
- * - ZIP  → mantém o ZIP inteiro no pacote final (`<base>.zip`). A maioria dos
- *          processos vem como ZIP grande; abrir no navegador travava a aba e
- *          impedia a geração do ZIP final, então não extraímos aqui.
- * - Outro → mantém como veio.
- */
 async function expandDownloadedBlob(
   fileName: string,
   blob: Blob,
@@ -105,11 +87,9 @@ async function expandDownloadedBlob(
   const base = stripKnownExt(fileName);
 
   if (kind === 'zip') {
-    // Sem extração no frontend — o ZIP completo entra no ZIP final.
     return [{ name: `${base}.zip`, blob }];
   }
 
-  // Garante extensão .pdf quando identificado como PDF; senão mantém o nome original.
   const name = kind === 'pdf' ? `${base}.pdf` : fileName;
   return [{ name, blob }];
 }
@@ -180,7 +160,7 @@ export class DownloadManager {
       this.progress.message = 'Escolha onde salvar os processos...';
       onProgress({ ...this.progress });
 
-      const method = await this.fs.initialize({ skipPicker: params.forceZip });
+      const method = await this.fs.initialize();
 
       const folderName = buildFolderName({
         mode: params.mode,
@@ -205,11 +185,10 @@ export class DownloadManager {
         sseUrl.searchParams.set('processNumbers', params.processNumbers.join(','));
       }
       if (params.documentTypes && params.documentTypes.length > 0) {
-
         sseUrl.searchParams.set('documentTypes', params.documentTypes.join(','));
       }
       if (params.searchCriteria) {
-        sseUrl.searchParams.set('searchCriteria', JSON.stringify(params.searchCriteria));
+        sseUrl.searchParams.set('criteria', JSON.stringify(params.searchCriteria));
       }
 
       await this.processSSE(sseUrl.toString(), params.apiBase, onProgress);
@@ -310,7 +289,6 @@ export class DownloadManager {
               signal,
             );
 
-            // Detecta PDF x ZIP pelo conteúdo e extrai os PDFs internos quando for ZIP.
             const saved = await expandDownloadedBlob(fileName, blob);
 
             let totalSize = 0;
@@ -319,7 +297,6 @@ export class DownloadManager {
               totalSize += file.blob.size;
             }
 
-            // A entrada "downloading" vira o primeiro arquivo realmente salvo.
             const fileEntry = this.progress.files.find(
               (f) => f.name === fileName && f.status === 'downloading',
             );
@@ -329,7 +306,6 @@ export class DownloadManager {
               fileEntry.size = first.blob.size;
               fileEntry.status = 'ok';
             }
-            // Volumes extras de um ZIP entram como entradas adicionais (informativas).
             for (let i = 1; i < saved.length; i++) {
               this.progress.files.push({
                 name: saved[i].name,
@@ -339,7 +315,6 @@ export class DownloadManager {
               });
             }
 
-            // Cada requisição conta como 1 sucesso, mesmo que o ZIP gere vários PDFs.
             this.progress.successCount++;
             this.progress.bytesDownloaded += totalSize;
           } catch (err) {
@@ -445,7 +420,7 @@ export class DownloadManager {
       `Modo: ${
         params.mode === 'by_task' ? 'Por Tarefa'
         : params.mode === 'by_tag' ? 'Por Etiqueta'
-        : params.mode === 'by_search' ? 'Pesquisa Geral'
+        : params.mode === 'by_search' ? 'Por Pesquisa Geral'
         : 'Por Número (lista CNJ)'
       }`,
     ];
@@ -454,6 +429,12 @@ export class DownloadManager {
     if (params.tagName) lines.push(`Etiqueta: ${params.tagName}`);
     if (params.processNumbers?.length) {
       lines.push(`Lista de processos: ${params.processNumbers.length} número(s)`);
+    }
+    if (params.searchCriteria) {
+      const preenchidos = Object.entries(params.searchCriteria)
+        .filter(([, v]) => (v || '').toString().trim())
+        .map(([k, v]) => `${k}=${v}`);
+      lines.push(`Critérios: ${preenchidos.join('; ') || '(nenhum)'}`);
     }
     if (params.documentTypes?.length) {
       lines.push(`Tipos de documento: ${params.documentTypes.join(', ')}`);

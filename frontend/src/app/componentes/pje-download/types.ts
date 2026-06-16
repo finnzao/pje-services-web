@@ -33,12 +33,56 @@ export interface SessaoPJE {
   twoFactorType?: 'totp' | 'email';
 }
 
+export interface SearchCriteria {
+  nomeParte?: string;
+  outrosNomes?: string;
+  nomeAdvogado?: string;
+  numeroSequencial?: string;
+  numeroDigito?: string;
+  numeroAno?: string;
+  numeroTribunal?: string;
+  numeroOrgao?: string;
+  documentoParte?: string;
+  assunto?: string;
+  classeJudicial?: string;
+  numeroDocumento?: string;
+  numeroOAB?: string;
+  letraOAB?: string;
+  ufOAB?: string;
+  jurisdicao?: string;
+  orgaoJulgador?: string;
+  dataAutuacaoInicio?: string;
+  dataAutuacaoFim?: string;
+  valorCausaInicial?: string;
+  valorCausaFinal?: string;
+}
+
+export interface ComboOption { value: string; label: string; }
+
+export interface SearchFormOptions {
+  ufOab: ComboOption[];
+  jurisdicoes: ComboOption[];
+  orgaosJulgadores: ComboOption[];
+}
+
+export interface SearchResultRow {
+  numeroProcesso: string;
+  orgaoJulgador: string;
+  autuadoEm: string;
+  classeJudicial: string;
+  poloAtivo: string;
+  poloPassivo: string;
+  noAtual: string;
+  ultimaMovimentacao: string;
+}
+
 export interface ParametrosDownload {
   mode: PJEDownloadMode;
   taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string;
   processNumbers?: string[];
   documentTypes?: string[];
+  searchCriteria?: SearchCriteria;
   pjeProfileIndex?: number;
 }
 
@@ -49,20 +93,6 @@ export interface PJEDownloadProgress { jobId: string; status: PJEJobStatus; prog
 export interface EntradaLog { id: number; timestamp: string; nivel: 'info' | 'warn' | 'error' | 'success'; modulo: string; mensagem: string; dados?: unknown; }
 
 export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
-
-export interface SearchCriteria {
-  nomeParte?: string;
-  outrosNomes?: string;
-  nomeAdvogado?: string;
-  documentoParte?: string;
-  numeroProcesso?: string;
-  numeroOAB?: string;
-  letraOAB?: string;
-  ufOAB?: string;
-  classeJudicial?: string;
-  assunto?: string;
-  numeroDocumento?: string;
-}
 
 interface StatusConfig { label: string; color: string; bg: string }
 
@@ -85,7 +115,7 @@ export const MODE_CONFIG: Record<PJEDownloadMode, { label: string; description: 
   by_task: { label: 'Por Tarefa', description: 'Baixar processos de uma tarefa' },
   by_tag: { label: 'Por Etiqueta', description: 'Baixar por etiqueta/marcador' },
   by_number: { label: 'Por Número', description: 'Baixar lista de processos por nº CNJ' },
-  by_search: { label: 'Pesquisa Geral', description: 'Baixar resultados de uma pesquisa' },
+  by_search: { label: 'Por Pesquisa', description: 'Pesquisa geral de processos' },
 };
 
 const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying'];

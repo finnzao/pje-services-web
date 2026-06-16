@@ -461,23 +461,8 @@ export default function PaginaDownloadPJE() {
     ? ['by_task', 'by_tag']
     : ['by_task', 'by_tag', 'by_number'];
 
-  // Pesquisa Geral abre uma TELA INTEIRA dedicada (mantém toda a sessão em memória).
-  if (mostrandoDownload && servicoAtivo === 'pesquisa' && sessao.perfilSelecionado && sessao.sessionId) {
-    return (
-      <TelaPesquisaGeral
-        sessionId={sessao.sessionId}
-        perfil={sessao.perfilSelecionado}
-        usuario={sessao.usuario}
-        onVoltar={() => setServicoAtivo(null)}
-        onMudarPerfil={handleMudarPerfil}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
   return (
     <div className="flex min-h-screen flex-col">
-      {/* ===== Barra superior institucional (azul) ===== */}
       <header className="sticky top-0 z-30 bg-gradient-to-r from-navy-900 via-navy-800 to-navy-700 text-white shadow-lg shadow-navy-900/20">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3.5">
@@ -517,7 +502,6 @@ export default function PaginaDownloadPJE() {
             </div>
           )}
         </div>
-        {/* filete em latão para realçar a identidade */}
         <div className="h-[3px] w-full bg-gradient-to-r from-brass-400/0 via-brass-400/70 to-brass-400/0" />
       </header>
 
@@ -527,7 +511,6 @@ export default function PaginaDownloadPJE() {
           <p className="mt-1.5 text-sm text-slate-500">Baixe processos e gere planilhas do PJE/TJBA com poucos cliques.</p>
         </div>
 
-        {/* ===== Fluxo de autenticação ===== */}
         {!mostrandoDownload && (
           <div key={etapa} className="animate-fade">
             {(etapa === 'login' || etapa === '2fa') && (
@@ -552,7 +535,6 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
 
-        {/* ===== Operação ===== */}
         {mostrandoDownload && (
           <div className="surface p-6 sm:p-7 animate-rise">
             {sessao.perfilSelecionado && !mostrandoResultado && (
@@ -634,7 +616,11 @@ export default function PaginaDownloadPJE() {
                       }}
                     />
 
-                    {servicoAtivo && (
+                    {servicoAtivo === 'pesquisa' && sessao.sessionId && sessao.perfilSelecionado && (
+                      <TelaPesquisaGeral perfil={sessao.perfilSelecionado} sessionId={sessao.sessionId} />
+                    )}
+
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && (
                       <DownloadModeSelector
                         modoSelecionado={modo}
                         onSelecionar={(m) => {
@@ -649,7 +635,7 @@ export default function PaginaDownloadPJE() {
                       />
                     )}
 
-                    {servicoAtivo && (
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && (
                       <div>
                         <div className="mb-3 flex items-center gap-2">
                           <span className="num-badge">3</span>
@@ -712,18 +698,20 @@ export default function PaginaDownloadPJE() {
                       </div>
                     )}
 
-                    <DownloadAction
-                      servico={servicoAtivo}
-                      modo={modo}
-                      tarefaSelecionada={tarefaSelecionada}
-                      etiquetaSelecionada={etiquetaSelecionada}
-                      numerosProcesso={numerosValidados}
-                      tiposSelecionados={tiposSelecionados}
-                      carregando={carregando}
-                      fsApiSupported={fsApiSupported}
-                      totalProcessos={totalProcessosTarefa}
-                      onClick={handleSubmit}
-                    />
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && (
+                      <DownloadAction
+                        servico={servicoAtivo}
+                        modo={modo}
+                        tarefaSelecionada={tarefaSelecionada}
+                        etiquetaSelecionada={etiquetaSelecionada}
+                        numerosProcesso={numerosValidados}
+                        tiposSelecionados={tiposSelecionados}
+                        carregando={carregando}
+                        fsApiSupported={fsApiSupported}
+                        totalProcessos={totalProcessosTarefa}
+                        onClick={handleSubmit}
+                      />
+                    )}
                   </div>
                 )}
               </>

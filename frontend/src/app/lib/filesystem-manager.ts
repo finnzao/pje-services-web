@@ -43,7 +43,7 @@ export function buildFolderName(params: {
     by_task: sanitizeFolderToken(params.taskName || 'Tarefa'),
     by_tag: sanitizeFolderToken(params.tagName || 'Etiqueta'),
     by_number: 'Processos_Manual',
-    by_search: 'Pesquisa',
+    by_search: 'Pesquisa_Geral',
   };
 
   return `PJE_${labels[params.mode]}_${date}_${time}`;

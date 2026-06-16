@@ -61,6 +61,8 @@ export function ListaProcessos({ valor, onChange, desabilitado }: ListaProcessos
 
       <p className="mb-2 text-xs text-slate-500">
         Um número por linha. Aceita <span className="font-mono">0000000-00.0000.0.00.0000</span> ou apenas os 20 dígitos.
+        <br/>
+        Apenas os processos do perfil será pesquisado
       </p>
 
       <textarea
