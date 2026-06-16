@@ -169,7 +169,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
 
       {erro && (
         <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
-          <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
+          <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
           <span>{erro}</span>
         </div>
       )}
@@ -188,7 +188,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
               <span className="truncate text-sm font-semibold text-ink">{downloadProgress.message}</span>
             </div>
             {downloadAtivo && (
-              <button type="button" onClick={handleCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
+              <button type="button" onClick={handleCancelar} className="flex shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
                 <X size={14} /> Cancelar
               </button>
             )}
@@ -219,7 +219,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
               <span className="truncate text-sm font-semibold text-ink">{planilhaProgress.message}</span>
             </div>
             {planilhaAtiva && (
-              <button type="button" onClick={handleCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
+              <button type="button" onClick={handleCancelar} className="flex shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
                 <X size={14} /> Cancelar
               </button>
             )}

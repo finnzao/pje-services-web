@@ -463,7 +463,7 @@ export default function PaginaDownloadPJE() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-30 bg-gradient-to-r from-navy-900 via-navy-800 to-navy-700 text-white shadow-lg shadow-navy-900/20">
+      <header className="sticky top-0 z-30 bg-linear-to-r from-navy-900 via-navy-800 to-navy-700 text-white shadow-lg shadow-navy-900/20">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3.5">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-brass-300 ring-1 ring-white/15 backdrop-blur">
@@ -502,7 +502,7 @@ export default function PaginaDownloadPJE() {
             </div>
           )}
         </div>
-        <div className="h-[3px] w-full bg-gradient-to-r from-brass-400/0 via-brass-400/70 to-brass-400/0" />
+        <div className="h-[3px] w-full bg-linear-to-r from-brass-400/0 via-brass-400/70 to-brass-400/0" />
       </header>
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-10">
@@ -561,7 +561,7 @@ export default function PaginaDownloadPJE() {
               <>
                 {erro && (
                   <div className="mb-6 flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
-                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-red-500" />
+                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
                     <span>{erro}</span>
                   </div>
                 )}
@@ -578,8 +578,8 @@ export default function PaginaDownloadPJE() {
                             {f.status === 'error' && <X size={11} className="text-red-500" />}
                             {f.status === 'not_available' && <AlertCircle size={11} className="text-brass-500" />}
                             <span className={`truncate ${f.status === 'error' ? 'text-red-600' : f.status === 'not_available' ? 'text-brass-600' : 'text-slate-600'}`}>{f.name}</span>
-                            {f.size > 0 && <span className="flex-shrink-0 text-slate-400">{formatBytes(f.size)}</span>}
-                            {f.status === 'not_available' && <span className="flex-shrink-0 text-[10px] text-brass-500">não disp.</span>}
+                            {f.size > 0 && <span className="shrink-0 text-slate-400">{formatBytes(f.size)}</span>}
+                            {f.status === 'not_available' && <span className="shrink-0 text-[10px] text-brass-500">não disp.</span>}
                           </div>
                         ))}
                       </div>
@@ -656,7 +656,7 @@ export default function PaginaDownloadPJE() {
                             {tarefaSelecionada && (
                               <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
                                 <span className="truncate text-sm font-semibold text-ink">{tarefaSelecionada}</span>
-                                <span className="chip flex-shrink-0 bg-navy-100 text-navy-700">{totalProcessosTarefa} processo(s)</span>
+                                <span className="chip shrink-0 bg-navy-100 text-navy-700">{totalProcessosTarefa} processo(s)</span>
                               </div>
                             )}
                           </>

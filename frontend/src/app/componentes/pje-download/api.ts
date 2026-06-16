@@ -1,12 +1,7 @@
 import { API_BASE, ApiError, request } from '../../lib/api-client';
+import type { PJEDownloadMode, PJEJobStatus } from './types';
 
 export { API_BASE, ApiError };
-
-type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number';
-type PJEJobStatus =
-  | 'pending' | 'authenticating' | 'awaiting_2fa' | 'selecting_profile'
-  | 'processing' | 'downloading' | 'checking_integrity' | 'retrying'
-  | 'completed' | 'failed' | 'cancelled' | 'partial';
 
 interface UserDTO {
   idUsuario: number; nomeUsuario: string; login: string;

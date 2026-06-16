@@ -193,7 +193,7 @@ export function FormularioPesquisa({
       )}
 
       <div className="mt-4 flex items-start gap-2 rounded-xl bg-navy-50 px-3.5 py-2.5 text-xs text-navy-700">
-        <Search size={13} className="mt-0.5 flex-shrink-0" />
+        <Search size={13} className="mt-0.5 shrink-0" />
         <span>Preencha ao menos um critério. A pesquisa usa a tela de Consulta Processual do PJE e retorna até 1000 processos.</span>
       </div>
     </div>
