@@ -19,7 +19,18 @@ export class PjeAdvogadosService {
   private cancelledJobs = new Set<string>();
   private progressMap = new Map<string, PlanilhaAdvogadosProgress>();
 
-  cancel(jobId: string): void { this.cancelledJobs.add(jobId); }
+  cancel(jobId: string): void {
+    this.cancelledJobs.add(jobId);
+    const current = this.progressMap.get(jobId);
+    if (current && !['completed', 'failed', 'cancelled'].includes(current.status)) {
+      this.progressMap.set(jobId, {
+        ...current,
+        status: 'cancelling',
+        message: 'Cancelamento solicitado — interrompendo processamento...',
+        timestamp: Date.now(),
+      });
+    }
+  }
   isCancelled(jobId: string): boolean { return this.cancelledJobs.has(jobId); }
   getProgress(jobId: string): PlanilhaAdvogadosProgress | null { return this.progressMap.get(jobId) ?? null; }
 
@@ -27,8 +38,15 @@ export class PjeAdvogadosService {
     const errors: Array<{ processo: string; message: string }> = [];
     const emit = (p: PlanilhaAdvogadosProgress) => this.progressMap.set(jobId, p);
 
-    // Normaliza filtros: aceita tanto `filtro` (legado) quanto `filtros` (novo)
     const filtros: FiltroAdvogado[] = this.normalizeFiltros(dto);
+
+    const emitCancelled = (total: number, processed: number) => {
+      emit({
+        jobId, status: 'cancelled', progress: 0,
+        totalProcesses: total, processedCount: processed,
+        message: 'Geração cancelada pelo usuário.', timestamp: Date.now(),
+      });
+    };
 
     try {
       const session = await this.resolveSession(dto);
@@ -40,7 +58,7 @@ export class PjeAdvogadosService {
       });
 
       const processos = await this.listProcesses(session, dto, jobId);
-      if (this.isCancelled(jobId)) return this.cancelledResult(jobId, processos.length, errors);
+      if (this.isCancelled(jobId)) { emitCancelled(processos.length, 0); return this.cancelledResult(jobId, processos.length, errors); }
 
       if (processos.length === 0) {
         emit({
@@ -61,6 +79,7 @@ export class PjeAdvogadosService {
       const resultados = await this.extractParallel(
         session, processos, jobId, errors,
         (processed, current) => {
+          if (this.isCancelled(jobId)) return;
           const pct = 10 + Math.round((processed / processos.length) * 80);
           emit({
             jobId, status: 'extracting', progress: pct,
@@ -72,7 +91,7 @@ export class PjeAdvogadosService {
         },
       );
 
-      if (this.isCancelled(jobId)) return this.cancelledResult(jobId, processos.length, errors);
+      if (this.isCancelled(jobId)) { emitCancelled(processos.length, resultados.filter(Boolean).length); return this.cancelledResult(jobId, processos.length, errors); }
 
       const totalAdvogados = resultados.reduce(
         (acc, r) => acc + r.advogadosPoloAtivo.length + r.advogadosPoloPassivo.length, 0,
@@ -107,6 +126,10 @@ export class PjeAdvogadosService {
         errors,
       };
     } catch (err) {
+      if (this.isCancelled(jobId)) {
+        emitCancelled(0, 0);
+        return this.cancelledResult(jobId, 0, errors);
+      }
       const msg = err instanceof Error ? err.message : 'Erro ao gerar planilha';
       emit({
         jobId, status: 'failed', progress: 0,
@@ -211,11 +234,6 @@ export class PjeAdvogadosService {
     return processos;
   }
 
-  /**
-   * Extrai advogados em paralelo com pool de concorrência limitada.
-   * Cada processo faz 2 requests sequenciais (chave de acesso + HTML),
-   * mas múltiplos processos rodam em paralelo respeitando EXTRACTION_CONCURRENCY.
-   */
   private async extractParallel(
     session: PjeSession,
     processos: ProcessoAdvogados[],
@@ -234,6 +252,7 @@ export class PjeAdvogadosService {
         if (idx >= processos.length) return;
         const proc = processos[idx];
         if (idx > 0) await sleep(STAGGER_MS);
+        if (this.isCancelled(jobId)) return;
         try {
           const enriquecido = await this.extractAdvogados(session, proc);
           resultados[idx] = enriquecido;
@@ -253,7 +272,6 @@ export class PjeAdvogadosService {
     );
     await Promise.all(workers);
 
-    // Garante que slots vazios (caso de cancelamento) recebam fallback
     for (let i = 0; i < processos.length; i++) {
       if (!resultados[i]) {
         resultados[i] = {

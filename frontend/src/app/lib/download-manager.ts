@@ -2,7 +2,7 @@ import { FileSystemManager, buildFolderName } from './filesystem-manager';
 import type { SearchCriteria } from '../componentes/pje-download/types';
 
 export interface DownloadProgress {
-  phase: 'initializing' | 'listing' | 'downloading' | 'collecting' | 'finalizing' | 'done' | 'error' | 'cancelled';
+  phase: 'initializing' | 'listing' | 'downloading' | 'collecting' | 'finalizing' | 'cancelling' | 'done' | 'error' | 'cancelled';
   totalProcesses: number;
 
   totalRequests: number;
@@ -54,6 +54,8 @@ function formatBytes(bytes: number): string {
 
 function resolveBaseUrl(apiBase: string): string {
   if (apiBase) return apiBase;
+  const envBase = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : undefined;
+  if (envBase) return envBase;
   if (typeof window !== 'undefined') return window.location.origin;
   return '';
 }
@@ -141,6 +143,11 @@ export class DownloadManager {
   private fs: FileSystemManager;
   private abortController: AbortController | null = null;
   private progress: DownloadProgress;
+  private streamId: string | null = null;
+  private apiBaseResolved = '';
+  private onProgressRef: ProgressCallback | null = null;
+  private cancelRequested = false;
+  private serverCancelled = false;
 
   constructor() {
     this.fs = new FileSystemManager();
@@ -154,6 +161,11 @@ export class DownloadManager {
   async execute(params: DownloadManagerParams, onProgress: ProgressCallback): Promise<void> {
     this.progress = this.initialProgress();
     this.abortController = new AbortController();
+    this.streamId = null;
+    this.cancelRequested = false;
+    this.serverCancelled = false;
+    this.onProgressRef = onProgress;
+    this.apiBaseResolved = resolveBaseUrl(params.apiBase);
 
     try {
       this.progress.phase = 'initializing';
@@ -174,7 +186,7 @@ export class DownloadManager {
         : 'Modo ZIP — arquivo será gerado ao final';
       onProgress({ ...this.progress });
 
-      const base = resolveBaseUrl(params.apiBase);
+      const base = this.apiBaseResolved;
       const sseUrl = new URL(`${base}/api/pje/downloads/stream-batch`);
       sseUrl.searchParams.set('sessionId', params.sessionId);
       sseUrl.searchParams.set('mode', params.mode);
@@ -204,6 +216,13 @@ export class DownloadManager {
 
       await this.fs.finalize(folderName);
 
+      if (this.serverCancelled) {
+        this.progress.phase = 'cancelled';
+        this.progress.message = `Cancelado pelo usuário. ${this.progress.successCount} arquivo(s) salvo(s) antes da interrupção (${formatBytes(this.progress.bytesDownloaded)}).`;
+        onProgress({ ...this.progress });
+        return;
+      }
+
       this.progress.phase = 'done';
       const summary = this.progress.notAvailableCount > 0
         ? `Concluído: ${this.progress.successCount} arquivo(s) baixado(s), ${this.progress.notAvailableCount} tipo(s) não disponível(eis) (${formatBytes(this.progress.bytesDownloaded)})`
@@ -221,15 +240,30 @@ export class DownloadManager {
       onProgress({ ...this.progress });
     } finally {
       this.abortController = null;
+      this.streamId = null;
     }
   }
 
-  cancel(): void {
-    this.abortController?.abort();
+  async cancel(): Promise<void> {
+    if (this.cancelRequested) return;
+    this.cancelRequested = true;
+    this.progress.phase = 'cancelling';
+    this.progress.message = 'Cancelando — aguardando o servidor interromper o processamento...';
+    this.onProgressRef?.({ ...this.progress });
+
+    if (this.streamId) {
+      try {
+        await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
+          method: 'POST',
+          keepalive: true,
+        });
+      } catch {  }
+    }
   }
 
   dispose(): void {
-    this.cancel();
+    this.cancelRequested = true;
+    this.abortController?.abort();
     this.fs.dispose();
   }
 
@@ -240,15 +274,33 @@ export class DownloadManager {
 
       const sem = new Semaphore(MAX_CONCURRENT_FILE_DOWNLOADS);
       const pendingDownloads: Promise<void>[] = [];
+      let settled = false;
 
-      signal.addEventListener('abort', () => {
+      const settleResolve = () => {
+        if (settled) return;
+        settled = true;
         es.close();
         Promise.allSettled(pendingDownloads).then(() => resolve());
+      };
+      const settleReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        es.close();
+        Promise.allSettled(pendingDownloads).then(() => reject(err));
+      };
+
+      signal.addEventListener('abort', () => { settleResolve(); });
+
+      es.addEventListener('init', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data?.streamId) this.streamId = data.streamId;
+        } catch {  }
       });
 
-      es.addEventListener('listing', (e: any) => {
+      es.addEventListener('listing', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
-        this.progress.phase = 'downloading';
+        if (this.progress.phase !== 'cancelling') this.progress.phase = 'downloading';
         this.progress.totalProcesses = data.total;
         this.progress.totalRequests = data.totalRequests || data.total;
         this.progress.documentTypes = data.documentTypes || [];
@@ -259,17 +311,19 @@ export class DownloadManager {
         onProgress({ ...this.progress });
       });
 
-      es.addEventListener('progress', (e: any) => {
+      es.addEventListener('progress', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
         this.progress.currentIndex = data.index;
         this.progress.currentProcess = data.processNumber;
         this.progress.currentDocumentType = data.documentType ?? undefined;
-        const tipo = data.documentType ? ` [${data.documentType}]` : '';
-        this.progress.message = `${data.index}/${data.total}: ${data.processNumber}${tipo}`;
+        if (this.progress.phase !== 'cancelling') {
+          const tipo = data.documentType ? ` [${data.documentType}]` : '';
+          this.progress.message = `${data.index}/${data.total}: ${data.processNumber}${tipo}`;
+        }
         onProgress({ ...this.progress });
       });
 
-      es.addEventListener('url', (e: any) => {
+      es.addEventListener('url', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
         const fileName = data.fileName || `${data.processNumber}.pdf`;
         const documentType = data.documentType ?? undefined;
@@ -335,15 +389,17 @@ export class DownloadManager {
         pendingDownloads.push(downloadPromise);
       });
 
-      es.addEventListener('queued', (e: any) => {
+      es.addEventListener('queued', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
         this.progress.queuedCount++;
-        const tipo = data.documentType ? ` [${data.documentType}]` : '';
-        this.progress.message = `${data.processNumber}${tipo}: aguardando PJE gerar PDF...`;
+        if (this.progress.phase !== 'cancelling') {
+          const tipo = data.documentType ? ` [${data.documentType}]` : '';
+          this.progress.message = `${data.processNumber}${tipo}: aguardando PJE gerar PDF...`;
+        }
         onProgress({ ...this.progress });
       });
 
-      es.addEventListener('not_available', (e: any) => {
+      es.addEventListener('not_available', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
         const documentType = data.documentType ?? undefined;
         const suffix = documentType ? `_${documentType.replace(/\s+/g, '_')}` : '';
@@ -356,7 +412,7 @@ export class DownloadManager {
         onProgress({ ...this.progress });
       });
 
-      es.addEventListener('error', (e: any) => {
+      es.addEventListener('item_error', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
           this.progress.failedCount++;
@@ -367,44 +423,49 @@ export class DownloadManager {
             size: 0, status: 'error', documentType, error: data.message,
           });
           onProgress({ ...this.progress });
-        } catch {
-          es.close();
-          Promise.allSettled(pendingDownloads).then(() => {
-            reject(new Error('Conexão com servidor perdida'));
-          });
-        }
+        } catch {  }
       });
 
-      es.addEventListener('done', (e: any) => {
-        const data = JSON.parse(e.data);
-        this.progress.phase = 'collecting';
-        const notAvLabel = data.notAvailable > 0 ? `, ${data.notAvailable} não disp.` : '';
-        this.progress.message = `Servidor concluiu: ${data.success} ok, ${data.failed} erros${notAvLabel}. Aguardando downloads finalizarem...`;
+      es.addEventListener('cancelled', () => {
+        this.serverCancelled = true;
+        this.progress.phase = 'cancelling';
+        this.progress.message = 'Cancelamento confirmado pelo servidor. Finalizando...';
         onProgress({ ...this.progress });
-        es.close();
+      });
 
+      es.addEventListener('done', (e: MessageEvent) => {
+        const data = JSON.parse(e.data);
+        if (data?.cancelled) this.serverCancelled = true;
+        this.progress.phase = this.serverCancelled ? 'cancelling' : 'collecting';
+        const notAvLabel = data.notAvailable > 0 ? `, ${data.notAvailable} não disp.` : '';
+        this.progress.message = this.serverCancelled
+          ? 'Servidor interrompeu o processamento. Finalizando downloads em andamento...'
+          : `Servidor concluiu: ${data.success} ok, ${data.failed} erros${notAvLabel}. Aguardando downloads finalizarem...`;
+        onProgress({ ...this.progress });
+
+        if (settled) return;
+        settled = true;
+        es.close();
         Promise.allSettled(pendingDownloads).then(() => {
-          this.progress.message = `Downloads finalizados: ${this.progress.successCount} ok, ${this.progress.failedCount} erros`;
+          this.progress.message = this.serverCancelled
+            ? `Downloads interrompidos: ${this.progress.successCount} ok, ${this.progress.failedCount} erros`
+            : `Downloads finalizados: ${this.progress.successCount} ok, ${this.progress.failedCount} erros`;
           onProgress({ ...this.progress });
           resolve();
         });
       });
 
-      es.addEventListener('fatal', (e: any) => {
-        const data = JSON.parse(e.data);
-        es.close();
-        Promise.allSettled(pendingDownloads).then(() => {
-          reject(new Error(data.message));
-        });
+      es.addEventListener('fatal', (e: MessageEvent) => {
+        let message = 'Erro fatal no servidor';
+        try { message = JSON.parse(e.data).message || message; } catch {  }
+        settleReject(new Error(message));
       });
 
       es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) {
-          es.close();
-          Promise.allSettled(pendingDownloads).then(() => {
-            reject(new Error('Falha na conexão SSE'));
-          });
-        }
+        if (settled) return;
+        es.close();
+        if (this.cancelRequested) { settleResolve(); return; }
+        settleReject(new Error('Falha na conexão com o servidor (SSE).'));
       };
     });
   }
@@ -425,6 +486,7 @@ export class DownloadManager {
       }`,
     ];
 
+    if (this.serverCancelled) lines.push(`Status: CANCELADO PELO USUÁRIO`);
     if (params.taskName) lines.push(`Tarefa: ${params.taskName}`);
     if (params.tagName) lines.push(`Etiqueta: ${params.tagName}`);
     if (params.processNumbers?.length) {

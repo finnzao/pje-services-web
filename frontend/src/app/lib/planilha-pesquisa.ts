@@ -1,7 +1,7 @@
 import type { SearchCriteria, SearchResultRow } from '../componentes/pje-download/types';
 
 export interface PesquisaProgress {
-  phase: 'initializing' | 'listing' | 'collecting' | 'finalizing' | 'done' | 'error' | 'cancelled';
+  phase: 'initializing' | 'listing' | 'collecting' | 'finalizing' | 'cancelling' | 'done' | 'error' | 'cancelled';
   total: number;
   collected: number;
   message: string;
@@ -29,6 +29,8 @@ const COLUNAS = [
 
 function resolveBaseUrl(apiBase: string): string {
   if (apiBase) return apiBase;
+  const envBase = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : undefined;
+  if (envBase) return envBase;
   if (typeof window !== 'undefined') return window.location.origin;
   return '';
 }
@@ -187,19 +189,35 @@ function stamp(): string {
 
 export class PlanilhaPesquisaManager {
   private es: EventSource | null = null;
-  private cancelled = false;
+  private cancelRequested = false;
+  private serverCancelled = false;
+  private settled = false;
   private rows: SearchResultRow[] = [];
+  private streamId: string | null = null;
+  private apiBaseResolved = '';
 
   get isRunning(): boolean { return this.es !== null; }
 
-  cancel(): void {
-    this.cancelled = true;
-    if (this.es) { this.es.close(); this.es = null; }
+  async cancel(): Promise<void> {
+    if (this.cancelRequested) return;
+    this.cancelRequested = true;
+    if (this.streamId) {
+      try {
+        await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
+          method: 'POST',
+          keepalive: true,
+        });
+      } catch {  }
+    }
   }
 
   execute(params: PlanilhaPesquisaParams, onProgress: PesquisaProgressCallback): Promise<void> {
-    this.cancelled = false;
+    this.cancelRequested = false;
+    this.serverCancelled = false;
+    this.settled = false;
     this.rows = [];
+    this.streamId = null;
+    this.apiBaseResolved = resolveBaseUrl(params.apiBase);
 
     const progress: PesquisaProgress = {
       phase: 'initializing',
@@ -211,7 +229,7 @@ export class PlanilhaPesquisaManager {
     onProgress({ ...progress, rows: [...this.rows] });
 
     return new Promise((resolve, reject) => {
-      const base = resolveBaseUrl(params.apiBase);
+      const base = this.apiBaseResolved;
       const url = new URL(`${base}/api/pje/downloads/search-sheet-stream`);
       url.searchParams.set('sessionId', params.sessionId);
       url.searchParams.set('criteria', JSON.stringify(params.criteria));
@@ -219,13 +237,22 @@ export class PlanilhaPesquisaManager {
       const es = new EventSource(url.toString());
       this.es = es;
 
-      const finish = () => { if (this.es) { this.es.close(); this.es = null; } };
+      const close = () => { if (this.es) { this.es.close(); this.es = null; } };
+
+      es.addEventListener('init', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data?.streamId) this.streamId = data.streamId;
+        } catch {  }
+      });
 
       es.addEventListener('listing', (e: MessageEvent) => {
         const data = JSON.parse(e.data);
-        progress.phase = 'collecting';
+        progress.phase = this.cancelRequested ? 'cancelling' : 'collecting';
         progress.total = data.total;
-        progress.message = `${data.total} processo(s) encontrado(s). Coletando "Nó(s) atual(is)"...`;
+        progress.message = this.cancelRequested
+          ? 'Cancelando — aguardando o servidor interromper...'
+          : `${data.total} processo(s) encontrado(s). Coletando "Nó(s) atual(is)"...`;
         onProgress({ ...progress, rows: [...this.rows] });
       });
 
@@ -243,19 +270,33 @@ export class PlanilhaPesquisaManager {
         });
         progress.collected = this.rows.length;
         progress.total = data.total || progress.total;
-        progress.message = `Coletando ${this.rows.length}/${progress.total}: ${data.numeroProcesso}`;
+        if (!this.cancelRequested) {
+          progress.message = `Coletando ${this.rows.length}/${progress.total}: ${data.numeroProcesso}`;
+        }
         onProgress({ ...progress, rows: [...this.rows] });
       });
 
-      es.addEventListener('done', async () => {
-        finish();
-        if (this.cancelled) {
+      es.addEventListener('cancelled', () => {
+        this.serverCancelled = true;
+        progress.phase = 'cancelling';
+        progress.message = 'Cancelamento confirmado pelo servidor. Finalizando...';
+        onProgress({ ...progress, rows: [...this.rows] });
+      });
+
+      es.addEventListener('done', async (e: MessageEvent) => {
+        if (this.settled) return;
+        this.settled = true;
+        try { const d = JSON.parse(e.data); if (d?.cancelled) this.serverCancelled = true; } catch {  }
+        close();
+
+        if (this.serverCancelled) {
           progress.phase = 'cancelled';
-          progress.message = 'Pesquisa cancelada.';
+          progress.message = `Pesquisa cancelada pelo usuário (${this.rows.length} processo(s) coletado(s)).`;
           onProgress({ ...progress, rows: [...this.rows] });
           resolve();
           return;
         }
+
         try {
           progress.phase = 'finalizing';
           progress.message = 'Gerando planilha...';
@@ -281,7 +322,9 @@ export class PlanilhaPesquisaManager {
       });
 
       es.addEventListener('fatal', (e: MessageEvent) => {
-        finish();
+        if (this.settled) return;
+        this.settled = true;
+        close();
         let message = 'Erro na pesquisa';
         try { message = JSON.parse(e.data).message || message; } catch {  }
         progress.phase = 'error';
@@ -291,14 +334,20 @@ export class PlanilhaPesquisaManager {
       });
 
       es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) {
-          finish();
-          if (this.cancelled) { resolve(); return; }
-          progress.phase = 'error';
-          progress.message = 'Falha na conexão com o servidor.';
+        if (this.settled) return;
+        this.settled = true;
+        close();
+        if (this.cancelRequested) {
+          progress.phase = 'cancelled';
+          progress.message = `Pesquisa cancelada (${this.rows.length} processo(s) coletado(s)).`;
           onProgress({ ...progress, rows: [...this.rows] });
-          reject(new Error('Falha na conexão SSE'));
+          resolve();
+          return;
         }
+        progress.phase = 'error';
+        progress.message = 'Falha na conexão com o servidor.';
+        onProgress({ ...progress, rows: [...this.rows] });
+        reject(new Error('Falha na conexão SSE'));
       };
     });
   }

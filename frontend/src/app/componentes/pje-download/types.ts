@@ -6,13 +6,13 @@ export type PJEJobStatus =
   | 'pending' | 'authenticating' | 'awaiting_2fa'
   | 'selecting_profile' | 'processing' | 'downloading'
   | 'checking_integrity' | 'retrying'
-  | 'completed' | 'partial' | 'failed' | 'cancelled';
+  | 'completed' | 'partial' | 'failed' | 'cancelling' | 'cancelled';
 
 export interface EstadoExecucao {
   isDownloading: boolean; downloadProgress: number; currentProcess: string;
   totalProcesses: number; completedProcesses: number; failedProcesses: number;
   notAvailableCount: number;
-  downloadStatus: 'idle' | 'listing' | 'downloading' | 'completed' | 'failed' | 'cancelled';
+  downloadStatus: 'idle' | 'listing' | 'downloading' | 'completed' | 'failed' | 'cancelling' | 'cancelled';
   downloadMessage: string; bytesDownloaded: number;
 }
 
@@ -107,6 +107,7 @@ export const STATUS_CONFIG: Record<PJEJobStatus, StatusConfig> = {
   retrying: { label: 'Retentando', color: 'text-orange-700', bg: 'bg-orange-50' },
   completed: { label: 'Concluído', color: 'text-emerald-700', bg: 'bg-emerald-50' },
   failed: { label: 'Falhou', color: 'text-red-700', bg: 'bg-red-50' },
+  cancelling: { label: 'Cancelando', color: 'text-amber-700', bg: 'bg-amber-50' },
   cancelled: { label: 'Cancelado', color: 'text-slate-500', bg: 'bg-slate-100' },
   partial: { label: 'Parcial', color: 'text-amber-700', bg: 'bg-amber-50' },
 };
@@ -118,7 +119,7 @@ export const MODE_CONFIG: Record<PJEDownloadMode, { label: string; description: 
   by_search: { label: 'Por Pesquisa', description: 'Pesquisa geral de processos' },
 };
 
-const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying'];
+const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying', 'cancelling'];
 
 export function isJobActive(status: PJEJobStatus): boolean { return ACTIVE_STATUSES.includes(status); }
 

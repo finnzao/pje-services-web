@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { sessionStore } from '../services/pje-auth';
 import { UrlExtractor, type PendingProcess } from '../services/download/url-extractor';
 import { registerProxyUrl } from './proxy.controller';
@@ -30,6 +31,7 @@ const MAX_STREAMS_GLOBAL = 5;
 const NOS_STAGGER_MS = 200;
 
 const activeStreams = new Map<string, { count: number; startedAt: number }>();
+const streamRegistry = new Map<string, { cancel: () => void }>();
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -54,6 +56,17 @@ async function validatePjeSession(session: any): Promise<boolean> {
 function releaseStream(userId: string): void {
   const entry = activeStreams.get(userId);
   if (entry) { entry.count--; if (entry.count <= 0) activeStreams.delete(userId); }
+}
+
+function sseHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': CORS_ORIGIN,
+    'Access-Control-Allow-Credentials': 'true',
+  };
 }
 
 interface StreamContext { extractor: UrlExtractor; send: (event: string, data: unknown) => void; cancelled: () => boolean; }
@@ -124,7 +137,7 @@ async function processOneRequest(
       return { processNumber: proc.numeroProcesso, type: 'not_available', documentType: documentTypeName };
     }
 
-    send('error', {
+    send('item_error', {
       processNumber: proc.numeroProcesso,
       documentType: isAllTypes ? null : documentTypeName,
       message: result.error || 'Erro desconhecido',
@@ -133,7 +146,7 @@ async function processOneRequest(
     return { processNumber: proc.numeroProcesso, type: 'error', documentType: documentTypeName };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Erro';
-    send('error', {
+    send('item_error', {
       processNumber: proc.numeroProcesso,
       documentType: isAllTypes ? null : documentTypeName,
       message: msg,
@@ -166,7 +179,7 @@ async function collectPending(
       });
       success++;
     } else {
-      ctx.send('error', {
+      ctx.send('item_error', {
         processNumber: item.processNumber,
         documentType: item.documentType ?? null,
         message: item.error || 'Timeout',
@@ -189,6 +202,17 @@ export async function streamRoutes(fastify: FastifyInstance) {
     const types = listDocumentTypes();
     reply.status(200).send({ success: true, data: types });
   });
+
+  fastify.post<{ Params: { streamId: string } }>(
+    '/stream-batch/:streamId/cancel', async (request, reply) => {
+      const entry = streamRegistry.get(request.params.streamId);
+      if (!entry) {
+        return reply.status(404).send({ success: false, error: { code: 'STREAM_NOT_FOUND', message: 'Stream não encontrado ou já finalizado.', statusCode: 404 } });
+      }
+      entry.cancel();
+      reply.status(200).send({ success: true, data: { streamId: request.params.streamId, cancelling: true }, timestamp: new Date().toISOString() });
+    },
+  );
 
   fastify.get<{ Querystring: { sessionId: string } }>(
     '/search-form-options', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -231,10 +255,30 @@ export async function streamRoutes(fastify: FastifyInstance) {
       if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem um download em andamento.', statusCode: 429 } });
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
-      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': CORS_ORIGIN });
-      const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {  } };
+      const streamId = randomUUID();
       let cancelled = false;
-      request.raw.on('close', () => { cancelled = true; releaseStream(userId); });
+      streamRegistry.set(streamId, { cancel: () => { cancelled = true; } });
+
+      reply.hijack();
+      reply.raw.writeHead(200, sseHeaders());
+      reply.raw.write('retry: 60000\n\n');
+      const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {  } };
+
+      const heartbeat = setInterval(() => { try { reply.raw.write(': ping\n\n'); } catch {  } }, 15000);
+
+      let finalized = false;
+      const finalizeStream = () => {
+        if (finalized) return;
+        finalized = true;
+        clearInterval(heartbeat);
+        streamRegistry.delete(streamId);
+        releaseStream(userId);
+        try { reply.raw.end(); } catch {  }
+      };
+
+      request.raw.on('close', () => { cancelled = true; finalizeStream(); });
+
+      send('init', { streamId });
 
       try {
         const extractor = new UrlExtractor(session);
@@ -267,8 +311,9 @@ export async function streamRoutes(fastify: FastifyInstance) {
         });
 
         if (processos.length === 0 || cancelled) {
-          send('done', { total: processos.length, success: 0, failed: 0, queued: 0, notAvailable: 0, elapsed: 0 });
-          reply.raw.end();
+          if (cancelled) send('cancelled', { reason: 'user', stage: 'listing' });
+          send('done', { total: processos.length, success: 0, failed: 0, queued: 0, notAvailable: 0, elapsed: 0, cancelled });
+          finalizeStream();
           return;
         }
 
@@ -292,6 +337,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
             const idx = requestIndex++;
 
             if (idx > 0) await sleep(REQUEST_STAGGER_MS);
+            if (cancelled) break;
 
             await pool.add(async () => {
               const result = await processOneRequest(ctx, proc, tipoNome, tipoId, idx, totalRequests);
@@ -319,17 +365,17 @@ export async function streamRoutes(fastify: FastifyInstance) {
           failed += r.failed;
         }
         const elapsed = Date.now() - startTime;
+        if (cancelled) send('cancelled', { reason: 'user', stage: 'downloading', success, failed, notAvailable });
         send('done', {
           total: processos.length,
           totalRequests: requestIndex,
-          success, failed, queued: 0, notAvailable, elapsed,
+          success, failed, queued: 0, notAvailable, elapsed, cancelled,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Erro fatal';
         send('fatal', { message: msg });
       } finally {
-        try { reply.raw.end(); } catch {  }
-        releaseStream(userId);
+        finalizeStream();
       }
     },
   );
@@ -353,18 +399,37 @@ export async function streamRoutes(fastify: FastifyInstance) {
       if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem uma operação em andamento.', statusCode: 429 } });
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
-      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': CORS_ORIGIN });
-      const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {  } };
+      const streamId = randomUUID();
       let cancelled = false;
-      request.raw.on('close', () => { cancelled = true; releaseStream(userId); });
+      streamRegistry.set(streamId, { cancel: () => { cancelled = true; } });
+
+      reply.hijack();
+      reply.raw.writeHead(200, sseHeaders());
+      reply.raw.write('retry: 60000\n\n');
+      const send = (event: string, data: unknown) => { try { reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {  } };
+
+      const heartbeat = setInterval(() => { try { reply.raw.write(': ping\n\n'); } catch {  } }, 15000);
+
+      let finalized = false;
+      const finalizeStream = () => {
+        if (finalized) return;
+        finalized = true;
+        clearInterval(heartbeat);
+        streamRegistry.delete(streamId);
+        releaseStream(userId);
+        try { reply.raw.end(); } catch {  }
+      };
+
+      request.raw.on('close', () => { cancelled = true; finalizeStream(); });
+
+      send('init', { streamId });
 
       try {
         const criterios = parseCriteriaQuery(criteria);
         const validacao = validateCriteria(criterios);
         if (!validacao.ok) {
           send('fatal', { message: validacao.error || 'Critérios inválidos.' });
-          reply.raw.end();
-          releaseStream(userId);
+          finalizeStream();
           return;
         }
 
@@ -399,9 +464,9 @@ export async function streamRoutes(fastify: FastifyInstance) {
         send('listing', { total: linhas.length, parallelSlots: PARALLEL_SLOTS });
 
         if (linhas.length === 0 || cancelled) {
-          send('done', { total: linhas.length });
-          reply.raw.end();
-          releaseStream(userId);
+          if (cancelled) send('cancelled', { reason: 'user', stage: 'listing' });
+          send('done', { total: linhas.length, cancelled });
+          finalizeStream();
           return;
         }
 
@@ -412,6 +477,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
           if (cancelled) break;
           const linha = linhas[i];
           if (i > 0) await sleep(NOS_STAGGER_MS);
+          if (cancelled) break;
           await pool.add(async () => {
             let noAtual = '';
             try {
@@ -436,13 +502,13 @@ export async function streamRoutes(fastify: FastifyInstance) {
         }
 
         await pool.drain();
-        send('done', { total: linhas.length });
+        if (cancelled) send('cancelled', { reason: 'user', stage: 'collecting' });
+        send('done', { total: linhas.length, cancelled });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Erro fatal';
         send('fatal', { message: msg });
       } finally {
-        try { reply.raw.end(); } catch {  }
-        releaseStream(userId);
+        finalizeStream();
       }
     },
   );

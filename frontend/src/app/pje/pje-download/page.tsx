@@ -314,6 +314,12 @@ export default function PaginaDownloadPJE() {
         finalProgress = { ...p };
         setDownloadProgress(finalProgress);
         const total = p.totalRequests || p.totalProcesses;
+        const downloadStatus: EstadoExecucao['downloadStatus'] =
+          p.phase === 'done' ? 'completed'
+          : p.phase === 'error' ? 'failed'
+          : p.phase === 'cancelled' ? 'cancelled'
+          : p.phase === 'cancelling' ? 'cancelling'
+          : 'downloading';
         setExecucao({
           isDownloading: !['done', 'error', 'cancelled'].includes(p.phase),
           downloadProgress: total > 0
@@ -324,10 +330,7 @@ export default function PaginaDownloadPJE() {
           completedProcesses: p.successCount,
           failedProcesses: p.failedCount,
           notAvailableCount: p.notAvailableCount,
-          downloadStatus: p.phase === 'done' ? 'completed'
-            : p.phase === 'error' ? 'failed'
-            : p.phase === 'cancelled' ? 'cancelled'
-            : 'downloading',
+          downloadStatus,
           downloadMessage: p.message,
           bytesDownloaded: p.bytesDownloaded,
         });
@@ -344,28 +347,29 @@ export default function PaginaDownloadPJE() {
         error: 'failed',
         cancelled: 'cancelled',
       };
-      const st = statusMap[fp.phase] || 'failed';
+      const st = statusMap[fp.phase];
+      if (st) {
+        const tituloMap: Record<ResultadoFinalState['status'], string> = {
+          success: 'Download concluído com sucesso!',
+          partial: 'Download concluído parcialmente',
+          failed: 'Falha no download',
+          cancelled: 'Download cancelado',
+        };
 
-      const tituloMap: Record<ResultadoFinalState['status'], string> = {
-        success: 'Download concluído com sucesso!',
-        partial: 'Download concluído parcialmente',
-        failed: 'Falha no download',
-        cancelled: 'Download cancelado',
-      };
-
-      setResultado({
-        status: st,
-        titulo: tituloMap[st],
-        mensagem: fp.message,
-        resumo: {
-          total: fp.totalRequests || fp.totalProcesses,
-          sucesso: fp.successCount,
-          falhas: fp.failedCount,
-          notAvailable: fp.notAvailableCount,
-          bytesTotal: fp.bytesDownloaded,
-        },
-        tipoServico: 'processos',
-      });
+        setResultado({
+          status: st,
+          titulo: tituloMap[st],
+          mensagem: fp.message,
+          resumo: {
+            total: fp.totalRequests || fp.totalProcesses,
+            sucesso: fp.successCount,
+            falhas: fp.failedCount,
+            notAvailable: fp.notAvailableCount,
+            bytesTotal: fp.bytesDownloaded,
+          },
+          tipoServico: 'processos',
+        });
+      }
     }
   }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, numerosValidados, tiposSelecionados]);
 
@@ -435,19 +439,11 @@ export default function PaginaDownloadPJE() {
 
   const handleCancelarAdvogados = useCallback(async () => {
     if (!jobAdvogados) return;
+    setJobAdvogados((p) => p ? { ...p, status: 'cancelling', message: 'Cancelando... aguardando o servidor interromper o processamento.' } : null);
     try {
       await cancelarPlanilhaAdvogados(jobAdvogados.jobId);
-      stopPolling();
-      setJobAdvogados((p) => p ? { ...p, status: 'cancelled', message: 'Cancelado.' } : null);
-      setCarregando(false);
-      setResultado({
-        status: 'cancelled',
-        titulo: 'Geração cancelada',
-        mensagem: 'A geração da planilha foi cancelada pelo usuário.',
-        tipoServico: 'advogados',
-      });
     } catch {  }
-  }, [jobAdvogados, stopPolling]);
+  }, [jobAdvogados]);
 
   const handleSubmit = useCallback(() => {
     if (servicoAtivo === 'processos') handleDownloadProcessos();

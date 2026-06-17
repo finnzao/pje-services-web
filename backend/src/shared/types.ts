@@ -67,7 +67,7 @@ export interface GerarPlanilhaAdvogadosDTO {
 }
 
 export interface PlanilhaAdvogadosProgress {
-  jobId: string; status: 'listing' | 'extracting' | 'generating' | 'completed' | 'failed' | 'cancelled';
+  jobId: string; status: 'listing' | 'extracting' | 'generating' | 'completed' | 'failed' | 'cancelling' | 'cancelled';
   progress: number; totalProcesses: number; processedCount: number;
   currentProcess?: string; message: string; timestamp: number;
 }
