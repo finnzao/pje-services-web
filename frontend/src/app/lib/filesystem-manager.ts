@@ -1,4 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { createZipChunks, zipToBlob, type ZipInput } from './zip-stream';
+import { isServiceWorkerDownloadSupported, saveZipViaServiceWorker } from './zip-download-sw';
+
 export interface SaveResult {
   fileName: string;
   size: number;
@@ -10,6 +13,9 @@ export type StorageMethod = 'fsapi' | 'zip';
 
 const MAX_FILENAME_LENGTH = 200;
 const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
+
+const SAFE_BLOB_LIMIT = 1024 * 1024 * 1024;
+const ZIP_SW_URL = process.env.NEXT_PUBLIC_ZIP_SW_URL || '/zip-sw.js';
 
 function sanitizeFileName(name: string): string {
   return name
@@ -53,10 +59,15 @@ export class FileSystemManager {
   private dirHandle: FileSystemDirectoryHandle | null = null;
   private batchDirHandle: FileSystemDirectoryHandle | null = null;
   private memoryFiles = new Map<string, Blob>();
+  private totalBytes = 0;
   private _method: StorageMethod = 'zip';
 
   static isSupported(): boolean {
     return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  }
+
+  static canSaveSingleFile(): boolean {
+    return typeof window !== 'undefined' && 'showSaveFilePicker' in window;
   }
 
   get method(): StorageMethod {
@@ -110,15 +121,83 @@ export class FileSystemManager {
     if (this._method === 'fsapi') return;
     if (this.memoryFiles.size === 0) return;
 
-    const zipBlob = await this.buildZip();
-    this.triggerDownload(zipBlob, `${zipFileName}.zip`);
-    this.memoryFiles.clear();
+    const fileName = `${zipFileName}.zip`;
+    const entries = this.buildEntries();
+
+    if (this.totalBytes <= SAFE_BLOB_LIMIT) {
+      const blob = await zipToBlob(entries);
+      this.triggerAnchorDownload(blob, fileName);
+      this.reset();
+      return;
+    }
+
+    if (FileSystemManager.canSaveSingleFile()) {
+      await this.streamToFsApi(entries, fileName);
+      this.reset();
+      return;
+    }
+
+    if (isServiceWorkerDownloadSupported()) {
+      try {
+        await saveZipViaServiceWorker(entries, fileName, ZIP_SW_URL);
+        this.reset();
+        return;
+      } catch (err) {
+        this.reset();
+        throw err instanceof Error ? err : new Error('Falha no download via service worker.');
+      }
+    }
+
+    try {
+      const blob = await zipToBlob(entries);
+      this.triggerAnchorDownload(blob, fileName);
+      this.reset();
+    } catch {
+      this.reset();
+      throw new Error(
+        'Download grande demais para este navegador montar em memória. Use o Chrome/Edge.',
+      );
+    }
   }
 
   dispose(): void {
-    this.memoryFiles.clear();
+    this.reset();
     this.dirHandle = null;
     this.batchDirHandle = null;
+  }
+
+  private reset(): void {
+    this.memoryFiles.clear();
+    this.totalBytes = 0;
+  }
+
+  private buildEntries(): ZipInput[] {
+    const entries: ZipInput[] = [];
+    for (const [name, blob] of this.memoryFiles) entries.push({ name, blob });
+    return entries;
+  }
+
+  private async streamToFsApi(entries: ZipInput[], fileName: string): Promise<void> {
+    let handle: FileSystemFileHandle;
+    try {
+      handle = await (window as any).showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } }],
+      });
+    } catch (err) {
+      if ((err as any)?.name === 'AbortError') {
+        throw new Error('Salvamento cancelado: escolha um destino para o arquivo ZIP.');
+      }
+      throw err;
+    }
+    const writable = await handle.createWritable();
+    try {
+      for await (const chunk of createZipChunks(entries)) {
+        await writable.write(chunk as BufferSource);
+      }
+    } finally {
+      await writable.close();
+    }
   }
 
   private async writeToFs(name: string, blob: Blob): Promise<SaveResult> {
@@ -134,28 +213,19 @@ export class FileSystemManager {
 
   private storeInMemory(name: string, blob: Blob): SaveResult {
     this.memoryFiles.set(name, blob);
+    this.totalBytes += blob.size;
     return { fileName: name, size: blob.size, savedAt: new Date().toISOString(), method: 'zip' };
   }
 
-  private async buildZip(): Promise<Blob> {
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
-
-    for (const [name, blob] of this.memoryFiles) {
-      zip.file(name, blob);
-    }
-
-    return zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
-  }
-
-  private triggerDownload(blob: Blob, fileName: string): void {
+  private triggerAnchorDownload(blob: Blob, fileName: string): void {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = fileName;
+    anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 }
