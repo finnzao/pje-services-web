@@ -61,6 +61,7 @@ export class FileSystemManager {
   private memoryFiles = new Map<string, Blob>();
   private totalBytes = 0;
   private _method: StorageMethod = 'zip';
+  private lastZip: { blob: Blob; fileName: string } | null = null;
 
   static isSupported(): boolean {
     return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -76,6 +77,57 @@ export class FileSystemManager {
 
   get fileCount(): number {
     return this.memoryFiles.size;
+  }
+
+  get canRedownloadZip(): boolean {
+    return this.lastZip !== null || (this._method === 'fsapi' && this.batchDirHandle !== null);
+  }
+
+  async redownloadZip(): Promise<boolean> {
+    if (this.lastZip) {
+      this.triggerAnchorDownload(this.lastZip.blob, this.lastZip.fileName);
+      return true;
+    }
+    if (this._method === 'fsapi' && this.batchDirHandle) {
+      const entries = await this.collectFsEntries();
+      if (entries.length === 0) return false;
+      const fileName = `${(this.batchDirHandle as any).name || 'PJE_processos'}.zip`;
+      await this.downloadZipFromEntries(entries, fileName);
+      return true;
+    }
+    return false;
+  }
+
+  private async collectFsEntries(): Promise<ZipInput[]> {
+    const entries: ZipInput[] = [];
+    const dir = this.batchDirHandle as any;
+    if (!dir?.entries) return entries;
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === 'file') {
+        const file = await handle.getFile();
+        entries.push({ name, blob: file });
+      }
+    }
+    return entries;
+  }
+
+  private async downloadZipFromEntries(entries: ZipInput[], fileName: string): Promise<void> {
+    const total = entries.reduce((s, e) => s + e.blob.size, 0);
+    if (total <= SAFE_BLOB_LIMIT) {
+      const blob = await zipToBlob(entries);
+      this.triggerAnchorDownload(blob, fileName);
+      return;
+    }
+    if (FileSystemManager.canSaveSingleFile()) {
+      await this.streamToFsApi(entries, fileName);
+      return;
+    }
+    if (isServiceWorkerDownloadSupported()) {
+      await saveZipViaServiceWorker(entries, fileName, ZIP_SW_URL);
+      return;
+    }
+    const blob = await zipToBlob(entries);
+    this.triggerAnchorDownload(blob, fileName);
   }
 
   async initialize(options?: { skipPicker?: boolean }): Promise<StorageMethod> {
@@ -126,6 +178,7 @@ export class FileSystemManager {
 
     if (this.totalBytes <= SAFE_BLOB_LIMIT) {
       const blob = await zipToBlob(entries);
+      this.lastZip = { blob, fileName };
       this.triggerAnchorDownload(blob, fileName);
       this.reset();
       return;
@@ -150,6 +203,7 @@ export class FileSystemManager {
 
     try {
       const blob = await zipToBlob(entries);
+      this.lastZip = { blob, fileName };
       this.triggerAnchorDownload(blob, fileName);
       this.reset();
     } catch {
@@ -162,6 +216,7 @@ export class FileSystemManager {
 
   dispose(): void {
     this.reset();
+    this.lastZip = null;
     this.dirHandle = null;
     this.batchDirHandle = null;
   }

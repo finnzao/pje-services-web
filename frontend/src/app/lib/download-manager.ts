@@ -4,7 +4,6 @@ import type { SearchCriteria } from '../componentes/pje-download/types';
 export interface DownloadProgress {
   phase: 'initializing' | 'listing' | 'downloading' | 'collecting' | 'finalizing' | 'cancelling' | 'done' | 'error' | 'cancelled';
   totalProcesses: number;
-
   totalRequests: number;
   currentIndex: number;
   currentProcess: string;
@@ -12,7 +11,6 @@ export interface DownloadProgress {
   successCount: number;
   failedCount: number;
   queuedCount: number;
-
   notAvailableCount: number;
   bytesDownloaded: number;
   message: string;
@@ -23,7 +21,6 @@ export interface DownloadProgress {
     error?: string;
     documentType?: string;
   }>;
-
   documentTypes: string[];
 }
 
@@ -38,7 +35,6 @@ export interface DownloadManagerParams {
   tagId?: number;
   isFavorite?: boolean;
   processNumbers?: string[];
-
   documentTypes?: string[];
   searchCriteria?: SearchCriteria;
 }
@@ -102,17 +98,21 @@ async function downloadWithFallback(
   apiBase: string,
   signal?: AbortSignal,
 ): Promise<Blob> {
-  try {
-    const res = await fetch(directUrl, { mode: 'cors', signal });
-    if (res.ok) return await res.blob();
-    throw new Error(`HTTP ${res.status}`);
-  } catch {
+  if (proxyUrl) {
     const base = resolveBaseUrl(apiBase);
     const fullProxyUrl = proxyUrl.startsWith('/') ? `${base}${proxyUrl}` : proxyUrl;
-    const res = await fetch(fullProxyUrl, { signal });
-    if (!res.ok) throw new Error(`Proxy falhou: HTTP ${res.status}`);
-    return await res.blob();
+    try {
+      const res = await fetch(fullProxyUrl, { signal });
+      if (res.ok) return await res.blob();
+      throw new Error(`Proxy HTTP ${res.status}`);
+    } catch (err) {
+      if (signal?.aborted) throw err;
+    }
   }
+
+  const res = await fetch(directUrl, { mode: 'cors', signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.blob();
 }
 
 class Semaphore {
@@ -158,6 +158,18 @@ export class DownloadManager {
     return this.abortController !== null && !this.abortController.signal.aborted;
   }
 
+  get storageMethod(): 'fsapi' | 'zip' {
+    return this.fs.method;
+  }
+
+  get canRedownloadZip(): boolean {
+    return this.fs.canRedownloadZip;
+  }
+
+  async redownloadZip(): Promise<boolean> {
+    return this.fs.redownloadZip();
+  }
+
   async execute(params: DownloadManagerParams, onProgress: ProgressCallback): Promise<void> {
     this.progress = this.initialProgress();
     this.abortController = new AbortController();
@@ -167,14 +179,18 @@ export class DownloadManager {
     this.onProgressRef = onProgress;
     this.apiBaseResolved = resolveBaseUrl(params.apiBase);
 
+    let folderName = '';
+    let method: 'fsapi' | 'zip' = 'zip';
+    let sseError: Error | null = null;
+
     try {
       this.progress.phase = 'initializing';
       this.progress.message = 'Escolha onde salvar os processos...';
       onProgress({ ...this.progress });
 
-      const method = await this.fs.initialize();
+      method = await this.fs.initialize();
 
-      const folderName = buildFolderName({
+      folderName = buildFolderName({
         mode: params.mode,
         taskName: params.taskName,
         tagName: params.tagName,
@@ -203,8 +219,28 @@ export class DownloadManager {
         sseUrl.searchParams.set('criteria', JSON.stringify(params.searchCriteria));
       }
 
-      await this.processSSE(sseUrl.toString(), params.apiBase, onProgress);
+      try {
+        await this.processSSE(sseUrl.toString(), params.apiBase, onProgress);
+      } catch (err) {
+        if (!this.abortController?.signal.aborted && !this.cancelRequested) {
+          sseError = err instanceof Error ? err : new Error('Falha na conexão com o servidor.');
+        }
+      }
+    } catch (err) {
+      this.abortController = null;
+      this.streamId = null;
+      if (this.cancelRequested || this.abortController === null) {
+        this.progress.phase = 'cancelled';
+        this.progress.message = 'Cancelado pelo usuário';
+      } else {
+        this.progress.phase = 'error';
+        this.progress.message = err instanceof Error ? err.message : 'Erro desconhecido';
+      }
+      onProgress({ ...this.progress });
+      return;
+    }
 
+    try {
       const report = this.buildReport(params, folderName);
       await this.fs.saveReport(report);
 
@@ -215,33 +251,40 @@ export class DownloadManager {
       onProgress({ ...this.progress });
 
       await this.fs.finalize(folderName);
-
-      if (this.serverCancelled) {
-        this.progress.phase = 'cancelled';
-        this.progress.message = `Cancelado pelo usuário. ${this.progress.successCount} arquivo(s) salvo(s) antes da interrupção (${formatBytes(this.progress.bytesDownloaded)}).`;
-        onProgress({ ...this.progress });
-        return;
-      }
-
-      this.progress.phase = 'done';
-      const summary = this.progress.notAvailableCount > 0
-        ? `Concluído: ${this.progress.successCount} arquivo(s) baixado(s), ${this.progress.notAvailableCount} tipo(s) não disponível(eis) (${formatBytes(this.progress.bytesDownloaded)})`
-        : `Concluído: ${this.progress.successCount}/${this.progress.totalRequests || this.progress.totalProcesses} (${formatBytes(this.progress.bytesDownloaded)})`;
-      this.progress.message = summary;
-      onProgress({ ...this.progress });
     } catch (err) {
-      if (this.abortController?.signal.aborted) {
-        this.progress.phase = 'cancelled';
-        this.progress.message = 'Cancelado pelo usuário';
-      } else {
-        this.progress.phase = 'error';
-        this.progress.message = err instanceof Error ? err.message : 'Erro desconhecido';
-      }
-      onProgress({ ...this.progress });
-    } finally {
       this.abortController = null;
       this.streamId = null;
+      this.progress.phase = 'error';
+      this.progress.message = err instanceof Error ? err.message : 'Falha ao gerar o arquivo final.';
+      onProgress({ ...this.progress });
+      return;
     }
+
+    this.abortController = null;
+    this.streamId = null;
+
+    if (this.serverCancelled) {
+      this.progress.phase = 'cancelled';
+      this.progress.message = `Cancelado pelo usuário. ${this.progress.successCount} arquivo(s) salvo(s) antes da interrupção (${formatBytes(this.progress.bytesDownloaded)}).`;
+      onProgress({ ...this.progress });
+      return;
+    }
+
+    if (sseError && this.progress.successCount === 0) {
+      this.progress.phase = 'error';
+      this.progress.message = sseError.message;
+      onProgress({ ...this.progress });
+      return;
+    }
+
+    this.progress.phase = 'done';
+    const summary = this.progress.notAvailableCount > 0
+      ? `${this.progress.successCount} arquivo(s) baixado(s), ${this.progress.notAvailableCount} tipo(s) não disponível(eis) (${formatBytes(this.progress.bytesDownloaded)})`
+      : `${this.progress.successCount}/${this.progress.totalRequests || this.progress.totalProcesses} (${formatBytes(this.progress.bytesDownloaded)})`;
+    this.progress.message = sseError
+      ? `Conexão interrompida, mas o ZIP foi gerado com ${this.progress.successCount} arquivo(s) já baixado(s). ${summary}`
+      : `Concluído: ${summary}`;
+    onProgress({ ...this.progress });
   }
 
   async cancel(): Promise<void> {
@@ -295,6 +338,16 @@ export class DownloadManager {
         try {
           const data = JSON.parse(e.data);
           if (data?.streamId) this.streamId = data.streamId;
+        } catch {  }
+      });
+
+      es.addEventListener('precheck', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.ready > 0 && this.progress.phase !== 'cancelling') {
+            this.progress.message = `${data.ready} de ${data.total} processo(s) ja prontos no PJE — reutilizando sem nova solicitacao`;
+            onProgress({ ...this.progress });
+          }
         } catch {  }
       });
 
@@ -520,7 +573,7 @@ export class DownloadManager {
     if (errors.length > 0) {
       lines.push(`ERROS (${errors.length}):`);
       for (const f of errors) {
-        lines.push(`  ✗ ${f.name}: ${f.error}`);
+        lines.push(`  x ${f.name}: ${f.error}`);
       }
       lines.push('');
     }
@@ -538,7 +591,7 @@ export class DownloadManager {
     if (ok.length > 0) {
       lines.push(`ARQUIVOS BAIXADOS (${ok.length}):`);
       for (const f of ok) {
-        lines.push(`  ✓ ${f.name} (${formatBytes(f.size)})`);
+        lines.push(`  ok ${f.name} (${formatBytes(f.size)})`);
       }
     }
 

@@ -4,7 +4,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
-  UserCog, Landmark,
+  UserCog, Landmark, Download,
 } from 'lucide-react';
 
 import { EtapaLogin } from '../../componentes/pje-download/EtapaLogin';
@@ -316,10 +316,10 @@ export default function PaginaDownloadPJE() {
         const total = p.totalRequests || p.totalProcesses;
         const downloadStatus: EstadoExecucao['downloadStatus'] =
           p.phase === 'done' ? 'completed'
-          : p.phase === 'error' ? 'failed'
-          : p.phase === 'cancelled' ? 'cancelled'
-          : p.phase === 'cancelling' ? 'cancelling'
-          : 'downloading';
+            : p.phase === 'error' ? 'failed'
+              : p.phase === 'cancelled' ? 'cancelled'
+                : p.phase === 'cancelling' ? 'cancelling'
+                  : 'downloading';
         setExecucao({
           isDownloading: !['done', 'error', 'cancelled'].includes(p.phase),
           downloadProgress: total > 0
@@ -400,7 +400,7 @@ export default function PaginaDownloadPJE() {
             advogadosJobId: p.status === 'completed' ? jobId : undefined,
           });
         }
-      } catch {  }
+      } catch { }
     }, 2500);
   }, [stopPolling]);
 
@@ -442,7 +442,7 @@ export default function PaginaDownloadPJE() {
     setJobAdvogados((p) => p ? { ...p, status: 'cancelling', message: 'Cancelando... aguardando o servidor interromper o processamento.' } : null);
     try {
       await cancelarPlanilhaAdvogados(jobAdvogados.jobId);
-    } catch {  }
+    } catch { }
   }, [jobAdvogados]);
 
   const handleSubmit = useCallback(() => {
@@ -549,8 +549,13 @@ export default function PaginaDownloadPJE() {
                 onNovaTarefa={handleNovaTarefa}
                 onMudarPerfil={handleMudarPerfil}
                 onLogout={handleLogout}
-                acaoExtra={resultado.advogadosJobId ? <BotaoDownloadPlanilha jobId={resultado.advogadosJobId} /> : undefined}
-              />
+                acaoExtra={
+                  resultado.advogadosJobId
+                    ? <BotaoDownloadPlanilha jobId={resultado.advogadosJobId} />
+                    : (resultado.tipoServico === 'processos' && managerRef.current?.canRedownloadZip)
+                      ? <BotaoBaixarZip onBaixar={() => { void managerRef.current?.redownloadZip(); }} />
+                      : undefined
+                } />
             )}
 
             {!mostrandoResultado && (
@@ -744,5 +749,13 @@ function BotaoDownloadPlanilha({ jobId }: { jobId: string }) {
       </button>
       {erroDownload && <p className="mt-2 text-center text-xs text-red-600">{erroDownload}</p>}
     </>
+  );
+}
+
+function BotaoBaixarZip({ onBaixar }: { onBaixar: () => void }) {
+  return (
+    <button type="button" onClick={onBaixar} className="btn btn-primary w-full py-2.5 text-sm">
+      <Download size={16} /> Baixar tudo em ZIP
+    </button>
   );
 }

@@ -29,6 +29,8 @@ const REQUEST_STAGGER_MS = 500;
 const MAX_STREAMS_PER_USER = 1;
 const MAX_STREAMS_GLOBAL = 5;
 const NOS_STAGGER_MS = 200;
+const CNJ_RE = /(\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4})/;
+const DOWNLOAD_AVAILABLE_STATUSES = ['S', 'DISPONIVEL', 'AVAILABLE'];
 
 const activeStreams = new Map<string, { count: number; startedAt: number }>();
 const streamRegistry = new Map<string, { cancel: () => void }>();
@@ -51,6 +53,44 @@ async function validatePjeSession(session: any): Promise<boolean> {
     session.idUsuario = user.idUsuario;
     return true;
   } catch { return false; }
+}
+
+async function fetchReadyDownloads(session: any): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const cookieStr = serializeCookies(session.cookies, 'pje.tjba.jus.br');
+    const headers = { ...buildPjeHeaders(session), Cookie: cookieStr };
+    const userId = session.idUsuario || session.idUsuarioLocalizacao;
+    const url = `${PJE_REST_BASE}/pjedocs-api/v1/downloadService/recuperarDownloadsDisponiveis?idUsuario=${userId}&sistemaOrigem=PRIMEIRA_INSTANCIA`;
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) return map;
+    const data = await res.json() as any;
+    for (const dl of data?.downloadsDisponiveis || []) {
+      const status = (dl.situacaoDownload || '').toUpperCase();
+      if (!DOWNLOAD_AVAILABLE_STATUSES.includes(status) || !dl.hashDownload) continue;
+      const procDigits = new Set<string>();
+      const m = (dl.nomeArquivo || '').match(CNJ_RE);
+      if (m) procDigits.add(m[1].replace(/\D/g, ''));
+      for (const it of dl.itens || []) {
+        const d = (it.numeroProcesso || '').replace(/\D/g, '');
+        if (d.length === 20) procDigits.add(d);
+      }
+      for (const d of procDigits) if (!map.has(d)) map.set(d, dl.hashDownload);
+    }
+  } catch {  }
+  return map;
+}
+
+async function resolveReadyUrl(session: any, hashDownload: string): Promise<string | null> {
+  try {
+    const cookieStr = serializeCookies(session.cookies, 'pje.tjba.jus.br');
+    const headers = { ...buildPjeHeaders(session), Cookie: cookieStr };
+    const url = `${PJE_REST_BASE}/pjedocs-api/v2/repositorio/gerar-url-download?hashDownload=${encodeURIComponent(hashDownload)}`;
+    const res = await fetch(url, { method: 'GET', headers });
+    if (!res.ok) return null;
+    const t = await res.text();
+    return t ? t.replace(/^"|"$/g, '').trim() : null;
+  } catch { return null; }
 }
 
 function releaseStream(userId: string): void {
@@ -102,7 +142,7 @@ async function processOneRequest(
     });
 
     if (result.type === 'direct' && result.url) {
-      const proxyToken = registerProxyUrl(result.url);
+      const proxyToken = registerProxyUrl(result.url, proc.numeroProcesso);
       const proxyUrl = `/api/pje/downloads/proxy/${proxyToken}`;
       const suffix = isAllTypes ? '' : `_${documentTypeName.replace(/\s+/g, '_')}`;
       const fileName = `${proc.numeroProcesso}${suffix}.pdf`;
@@ -132,7 +172,7 @@ async function processOneRequest(
       send('not_available', {
         processNumber: proc.numeroProcesso,
         documentType: isAllTypes ? null : documentTypeName,
-        message: result.error || 'Tipo não disponível neste processo',
+        message: result.error || 'Tipo nao disponivel neste processo',
       });
       return { processNumber: proc.numeroProcesso, type: 'not_available', documentType: documentTypeName };
     }
@@ -164,7 +204,7 @@ async function collectPending(
   const collected = await ctx.extractor.collectPendingUrls(pendingQueue, ctx.cancelled);
   for (const item of collected) {
     if (item.url) {
-      const proxyToken = registerProxyUrl(item.url);
+      const proxyToken = registerProxyUrl(item.url, item.processNumber);
       const suffix = item.documentType
         ? `_${item.documentType.replace(/\s+/g, '_')}`
         : '';
@@ -207,7 +247,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
     '/stream-batch/:streamId/cancel', async (request, reply) => {
       const entry = streamRegistry.get(request.params.streamId);
       if (!entry) {
-        return reply.status(404).send({ success: false, error: { code: 'STREAM_NOT_FOUND', message: 'Stream não encontrado ou já finalizado.', statusCode: 404 } });
+        return reply.status(404).send({ success: false, error: { code: 'STREAM_NOT_FOUND', message: 'Stream nao encontrado ou ja finalizado.', statusCode: 404 } });
       }
       entry.cancel();
       reply.status(200).send({ success: true, data: { streamId: request.params.streamId, cancelling: true }, timestamp: new Date().toISOString() });
@@ -217,15 +257,15 @@ export async function streamRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { sessionId: string } }>(
     '/search-form-options', async (request: FastifyRequest, reply: FastifyReply) => {
       const { sessionId } = request.query as any;
-      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
+      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId e obrigatorio.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
-      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada.', statusCode: 401 } });
+      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessao PJE expirada.', statusCode: 401 } });
       try {
         const html = await consultaFetchForm(session as any);
         const options = parseFormOptions(html);
         reply.status(200).send({ success: true, data: options });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Erro ao carregar formulário';
+        const msg = err instanceof Error ? err.message : 'Erro ao carregar formulario';
         reply.status(502).send({ success: false, error: { code: 'FORM_ERROR', message: msg, statusCode: 502 } });
       }
     },
@@ -240,19 +280,19 @@ export async function streamRoutes(fastify: FastifyInstance) {
       const query = request.query as any;
       const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes, criteria } = query;
 
-      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
+      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId e obrigatorio.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
-      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada.', statusCode: 401 } });
+      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessao PJE expirada.', statusCode: 401 } });
 
       const sessionValid = await validatePjeSession(session);
-      if (!sessionValid) { sessionStore.delete(sessionId); return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada no servidor.', statusCode: 401 } }); }
+      if (!sessionValid) { sessionStore.delete(sessionId); return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessao PJE expirada no servidor.', statusCode: 401 } }); }
 
       const userId = session.cpf || sessionId.slice(0, 16);
       let totalActive = 0;
       for (const entry of activeStreams.values()) totalActive += entry.count;
       if (totalActive >= MAX_STREAMS_GLOBAL) return reply.status(429).send({ success: false, error: { code: 'SERVER_BUSY', message: `Servidor ocupado.`, statusCode: 429 } });
       const userEntry = activeStreams.get(userId);
-      if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem um download em andamento.', statusCode: 429 } });
+      if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Voce ja tem um download em andamento.', statusCode: 429 } });
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
       const streamId = randomUUID();
@@ -317,6 +357,14 @@ export async function streamRoutes(fastify: FastifyInstance) {
           return;
         }
 
+        const wantsWholeProcess = tipoPares.some(([nome]) => nome === SELECIONE_SENTINEL);
+        const readyMap = (wantsWholeProcess && !cancelled)
+          ? await fetchReadyDownloads(session as any)
+          : new Map<string, string>();
+        let readyHits = 0;
+        for (const p of processos) if (readyMap.has(p.numeroProcesso.replace(/\D/g, ''))) readyHits++;
+        send('precheck', { ready: readyHits, total: processos.length });
+
         const startTime = Date.now();
         let success = 0; let failed = 0; let notAvailable = 0;
         const pendingQueue: PendingProcess[] = [];
@@ -330,16 +378,36 @@ export async function streamRoutes(fastify: FastifyInstance) {
         for (let i = 0; i < processos.length; i++) {
           if (cancelled) break;
           const proc = processos[i];
+          const digits = proc.numeroProcesso.replace(/\D/g, '');
 
           for (let t = 0; t < totalTipos; t++) {
             if (cancelled) break;
             const [tipoNome, tipoId] = tipoPares[t];
             const idx = requestIndex++;
+            const readyHash = (tipoNome === SELECIONE_SENTINEL && readyMap.has(digits)) ? readyMap.get(digits) : undefined;
 
-            if (idx > 0) await sleep(REQUEST_STAGGER_MS);
+            if (idx > 0) await sleep(readyHash ? NOS_STAGGER_MS : REQUEST_STAGGER_MS);
             if (cancelled) break;
 
             await pool.add(async () => {
+              if (readyHash) {
+                try {
+                  const url = await resolveReadyUrl(session as any, readyHash);
+                  if (url) {
+                    const proxyToken = registerProxyUrl(url, proc.numeroProcesso);
+                    send('url', {
+                      processNumber: proc.numeroProcesso,
+                      documentType: null,
+                      downloadUrl: url,
+                      proxyUrl: `/api/pje/downloads/proxy/${proxyToken}`,
+                      fileName: `${proc.numeroProcesso}.pdf`,
+                      method: 'ready',
+                    });
+                    success++;
+                    return;
+                  }
+                } catch {  }
+              }
               const result = await processOneRequest(ctx, proc, tipoNome, tipoId, idx, totalRequests);
               if (result.type === 'success') success++;
               else if (result.type === 'queued') pendingQueue.push({ proc, requestedAt: Date.now(), documentType: tipoNome === SELECIONE_SENTINEL ? undefined : tipoNome });
@@ -370,6 +438,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
           total: processos.length,
           totalRequests: requestIndex,
           success, failed, queued: 0, notAvailable, elapsed, cancelled,
+          reused: readyHits,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Erro fatal';
@@ -384,19 +453,19 @@ export async function streamRoutes(fastify: FastifyInstance) {
     '/search-sheet-stream', async (request: FastifyRequest, reply: FastifyReply) => {
       const { sessionId, criteria } = request.query as any;
 
-      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId é obrigatório.', statusCode: 400 } });
+      if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId e obrigatorio.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
-      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada.', statusCode: 401 } });
+      if (!session) return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessao PJE expirada.', statusCode: 401 } });
 
       const sessionValid = await validatePjeSession(session);
-      if (!sessionValid) { sessionStore.delete(sessionId); return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessão PJE expirada no servidor.', statusCode: 401 } }); }
+      if (!sessionValid) { sessionStore.delete(sessionId); return reply.status(401).send({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Sessao PJE expirada no servidor.', statusCode: 401 } }); }
 
       const userId = session.cpf || sessionId.slice(0, 16);
       let totalActive = 0;
       for (const entry of activeStreams.values()) totalActive += entry.count;
       if (totalActive >= MAX_STREAMS_GLOBAL) return reply.status(429).send({ success: false, error: { code: 'SERVER_BUSY', message: 'Servidor ocupado.', statusCode: 429 } });
       const userEntry = activeStreams.get(userId);
-      if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Você já tem uma operação em andamento.', statusCode: 429 } });
+      if (userEntry && userEntry.count >= MAX_STREAMS_PER_USER) return reply.status(429).send({ success: false, error: { code: 'USER_LIMIT', message: 'Voce ja tem uma operacao em andamento.', statusCode: 429 } });
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
       const streamId = randomUUID();
@@ -428,7 +497,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
         const criterios = parseCriteriaQuery(criteria);
         const validacao = validateCriteria(criterios);
         if (!validacao.ok) {
-          send('fatal', { message: validacao.error || 'Critérios inválidos.' });
+          send('fatal', { message: validacao.error || 'Criterios invalidos.' });
           finalizeStream();
           return;
         }

@@ -17,6 +17,18 @@ const ALLOWED_ORIGINS: (string | RegExp)[] = IS_PRODUCTION
     ]
   : ['http://localhost:3000', 'http://localhost:3001'];
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+
+function formatMb(bytes: number): string {
+  return (bytes / 1048576).toFixed(0);
+}
+
 async function main() {
   const fastify = Fastify({
     logger: {
@@ -27,36 +39,47 @@ async function main() {
     },
   });
 
-  // CORS — DEVE vir ANTES do helmet
   await fastify.register(cors, {
     origin: IS_PRODUCTION ? ALLOWED_ORIGINS : true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-user', 'X-User'],
+    exposedHeaders: ['Content-Length', 'Content-Disposition'],
     credentials: true,
   });
 
-  // Security headers — DEPOIS do CORS
   await fastify.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: false,
   });
 
-  // Rate limiting
   await fastify.register(rateLimit, { max: 100, timeWindow: '1 minute' });
 
   fastify.setErrorHandler(errorHandler);
 
-  // Health check (Render/Railway + UptimeRobot)
+  fastify.addHook('onResponse', async (req, reply) => {
+    if (req.url.includes('/api/pje')) {
+      const ms = (reply.elapsedTime ?? 0).toFixed(0);
+      fastify.log.info(`${req.method} ${reply.statusCode} ${req.url.split('?')[0]} (${ms}ms)`);
+    }
+  });
+
+  const memTimer = setInterval(() => {
+    const m = process.memoryUsage();
+    fastify.log.info(`[mem] rss=${formatMb(m.rss)}MB heapUsed=${formatMb(m.heapUsed)}MB/${formatMb(m.heapTotal)}MB`);
+  }, 30_000);
+  if (typeof memTimer.unref === 'function') memTimer.unref();
+  fastify.addHook('onClose', () => clearInterval(memTimer));
+
   fastify.get('/api/health', async () => ({
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    rssMb: formatMb(process.memoryUsage().rss),
     env: IS_PRODUCTION ? 'production' : 'development',
   }));
 
   await registerPJEDownloadModule(fastify);
 
-  // Cleanup old downloads every 30 min
   const downloadCleanup = setInterval(() => {
     try {
       const dirs = [
@@ -80,7 +103,10 @@ async function main() {
   fastify.addHook('onClose', () => clearInterval(downloadCleanup));
 
   await fastify.listen({ port: PORT, host: '0.0.0.0' });
-  fastify.log.info(`API rodando na porta ${PORT} (${IS_PRODUCTION ? 'production' : 'development'})`);
+  console.log('------------------------------------------------');
+  console.log(`  API PJE  |  porta ${PORT}  |  ${IS_PRODUCTION ? 'PRODUCAO' : 'DEV'}`);
+  console.log(`  http://localhost:${PORT}/api/health`);
+  console.log('------------------------------------------------');
 }
 
 main().catch((err) => { console.error('Erro fatal ao iniciar API:', err); process.exit(1); });
