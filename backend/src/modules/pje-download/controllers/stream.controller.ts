@@ -4,8 +4,8 @@ import { sessionStore } from '../services/pje-auth';
 import { UrlExtractor, type PendingProcess } from '../services/download/url-extractor';
 import { registerProxyUrl } from './proxy.controller';
 import {
-  serializeCookies, serializeAllCookies, buildPjeHeaders,
-  PJE_REST_BASE, PJE_FRONTEND_ORIGIN, PJE_LEGACY_APP,
+  serializeCookies, buildPjeHeaders, validatePjeSession,
+  PJE_REST_BASE,
 } from '../../../shared/pje-api-client';
 import { ParallelPool } from '../../../shared/parallel-pool';
 import {
@@ -36,24 +36,6 @@ const activeStreams = new Map<string, { count: number; startedAt: number }>();
 const streamRegistry = new Map<string, { cancel: () => void }>();
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
-
-async function validatePjeSession(session: any): Promise<boolean> {
-  try {
-    const cookieStr = serializeCookies(session.cookies, 'pje.tjba.jus.br');
-    const allCookieStr = serializeAllCookies(session.cookies);
-    const res = await fetch(`${PJE_REST_BASE}/usuario/currentUser`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json', 'X-pje-legacy-app': PJE_LEGACY_APP, 'Origin': PJE_FRONTEND_ORIGIN, 'Referer': `${PJE_FRONTEND_ORIGIN}/`, 'X-pje-cookies': allCookieStr, 'X-pje-usuario-localizacao': session.idUsuarioLocalizacao, 'Cookie': cookieStr },
-    });
-    if (!res.ok) return false;
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('json')) return false;
-    const user = await res.json() as any;
-    if (!user?.idUsuario || user.idUsuario === 0) return false;
-    session.idUsuario = user.idUsuario;
-    return true;
-  } catch { return false; }
-}
 
 async function fetchReadyDownloads(session: any): Promise<Map<string, string>> {
   const map = new Map<string, string>();

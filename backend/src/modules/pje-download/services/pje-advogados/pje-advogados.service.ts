@@ -163,6 +163,9 @@ export class PjeAdvogadosService {
       const existing = sessionStore.get(dto.pjeSessionId);
       if (existing) return existing as unknown as PjeSession;
     }
+    if (!dto.credentials?.cpf || !dto.credentials?.password) {
+      throw new Error('Sessão PJE expirada. Faça login novamente.');
+    }
     const proxy = new PJEAuthProxy();
     const loginResult = await proxy.login(dto.credentials.cpf, dto.credentials.password);
     if (loginResult.error || !loginResult.sessionId) {

@@ -2,7 +2,8 @@ import { API_BASE, request } from '../../lib/api-client';
 import type { FiltroAdvogado } from './types';
 
 export interface GerarPlanilhaParams {
-  credentials: { cpf: string; password: string };
+  /** Opcional quando pjeSessionId aponta para uma sessão ativa (após F5 a senha não fica no navegador). */
+  credentials?: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag';
   taskName?: string;
   isFavorite?: boolean;

@@ -59,7 +59,8 @@ export interface ProcessoAdvogados {
 export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
 
 export interface GerarPlanilhaAdvogadosDTO {
-  credentials: { cpf: string; password: string };
+  /** Opcional quando pjeSessionId aponta para uma sessão ativa (ex.: após F5, a senha não fica no navegador). */
+  credentials?: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag'; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string; pjeProfileIndex?: number; pjeSessionId?: string;
   /** Seleção múltipla — quando presentes, têm precedência sobre taskName/tagId. */

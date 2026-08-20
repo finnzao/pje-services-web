@@ -1,8 +1,32 @@
 import type { FastifyInstance } from 'fastify';
 import { PJEAuthProxy } from '../services/auth/pje-auth-proxy.service';
+import { sessionStore } from '../services/pje-auth';
+import { validatePjeSession } from '../../../shared/pje-api-client';
 import { ok } from '../../../shared/response';
 
 export async function authRoutes(fastify: FastifyInstance) {
+  /**
+   * Verificação leve de sessão (usada no F5 / reidratação do frontend).
+   * Sempre 200 — o resultado vai no corpo, para o cliente decidir sem tratar 401.
+   */
+  fastify.get<{ Querystring: { sessionId: string } }>('/validate-session', async (request, reply) => {
+    const sessionId = (request.query as any).sessionId;
+    if (!sessionId) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'MISSING_SESSION', message: 'sessionId obrigatório.', statusCode: 400 },
+      });
+    }
+    const session = sessionStore.get(sessionId);
+    if (!session) return ok(reply, { valid: false, reason: 'NOT_FOUND' });
+    const valid = await validatePjeSession(session as any);
+    if (!valid) {
+      sessionStore.delete(sessionId);
+      return ok(reply, { valid: false, reason: 'EXPIRED' });
+    }
+    ok(reply, { valid: true });
+  });
+
   fastify.post<{ Body: { cpf: string; password: string } }>('/login', async (request, reply) => {
     const { cpf, password } = request.body || {};
     if (!cpf || !password) {

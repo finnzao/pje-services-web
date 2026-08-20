@@ -33,4 +33,22 @@ export async function pjeApiPost<T>(session: PjeSession, endpoint: string, body:
   if (ct.includes('json')) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
 }
+/** Ping leve no PJE (currentUser) para saber se a sessão ainda vale. Atualiza session.idUsuario. */
+export async function validatePjeSession(session: PjeSession): Promise<boolean> {
+  try {
+    const cookieStr = serializePjeCookies(session.cookies);
+    const res = await fetch(`${PJE_REST_BASE}/usuario/currentUser`, {
+      method: 'GET',
+      headers: { ...buildPjeHeaders(session), Cookie: cookieStr },
+    });
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('json')) return false;
+    const user = await res.json() as any;
+    if (!user?.idUsuario || user.idUsuario === 0) return false;
+    session.idUsuario = user.idUsuario;
+    return true;
+  } catch { return false; }
+}
+
 export { PJE_BASE, PJE_REST_BASE, PJE_FRONTEND_ORIGIN, PJE_LEGACY_APP };

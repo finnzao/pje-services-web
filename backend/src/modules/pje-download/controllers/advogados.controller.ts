@@ -15,10 +15,11 @@ export function advogadosRoutes(service: PjeAdvogadosService) {
       const user = getUser(request);
       const dto = request.body;
 
-      if (!dto?.credentials?.cpf || !dto?.credentials?.password) {
+      const temCredenciais = !!(dto?.credentials?.cpf && dto?.credentials?.password);
+      if (!temCredenciais && !dto?.pjeSessionId) {
         return reply.status(400).send({
           success: false,
-          error: { code: 'MISSING_CREDENTIALS', message: 'CPF e senha sao obrigatorios.', statusCode: 400 },
+          error: { code: 'MISSING_CREDENTIALS', message: 'Informe CPF e senha ou uma sessao PJE ativa.', statusCode: 400 },
         });
       }
       if (!dto.fonte || !['by_task', 'by_tag'].includes(dto.fonte)) {

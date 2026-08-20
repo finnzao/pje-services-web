@@ -2,3 +2,5 @@ node_modules
 dist
 .env*
 downloads/
+
+.pje-sessions.json

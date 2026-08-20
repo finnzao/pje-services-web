@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   AlertCircle, HardDrive, FileArchive,
   Loader2, CheckCircle, X, LogOut,
@@ -24,7 +24,7 @@ import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogado
 import { TelaPesquisaGeral } from '../../componentes/pje-download/TelaPesquisaGeral';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
-import { loginPJE, enviar2FA, selecionarPerfil } from '../../componentes/pje-download/api';
+import { loginPJE, enviar2FA, selecionarPerfil, validarSessao } from '../../componentes/pje-download/api';
 import {
   gerarPlanilhaAdvogados, obterProgressoAdvogados,
   cancelarPlanilhaAdvogados, downloadPlanilha,
@@ -67,6 +67,9 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// A senha NUNCA é persistida — só a sessão (sessionId, usuário, perfil, tarefas, etiquetas).
+const SESSAO_STORAGE_KEY = 'pje_sessao_v1';
+
 let logIdCounter = 0;
 
 function useUiLogs() {
@@ -98,6 +101,41 @@ export default function PaginaDownloadPJE() {
   const [credenciais, setCredenciais] = useState<{ cpf: string; password: string } | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [restaurando, setRestaurando] = useState(true);
+
+  // F5: reidrata a sessão salva no localStorage, validando no servidor antes de usar.
+  useEffect(() => {
+    let ativo = true;
+    let salva: SessaoPJE | null = null;
+    try { salva = JSON.parse(localStorage.getItem(SESSAO_STORAGE_KEY) || 'null'); } catch {  }
+    if (!salva?.autenticado || !salva.sessionId) {
+      localStorage.removeItem(SESSAO_STORAGE_KEY);
+      setRestaurando(false);
+      return;
+    }
+    const sessaoSalva = salva;
+    validarSessao(sessaoSalva.sessionId!)
+      .then((r) => {
+        if (!ativo) return;
+        if (r.valid) {
+          setSessao(sessaoSalva);
+          setEtapa(sessaoSalva.perfilSelecionado ? 'download' : 'perfil');
+        } else {
+          localStorage.removeItem(SESSAO_STORAGE_KEY);
+          setErro('Sua sessão no PJE expirou. Faça login novamente.');
+        }
+      })
+      .catch(() => {  }) // servidor fora: fica na tela de login sem erro genérico
+      .finally(() => { if (ativo) setRestaurando(false); });
+    return () => { ativo = false; };
+  }, []);
+
+  // Persiste a sessão (sem senha) a cada mudança relevante.
+  useEffect(() => {
+    if (sessao.autenticado && sessao.sessionId) {
+      try { localStorage.setItem(SESSAO_STORAGE_KEY, JSON.stringify(sessao)); } catch {  }
+    }
+  }, [sessao]);
 
   const [servicoAtivo, setServicoAtivo] = useState<ServicoAtivo | null>(null);
   const [modo, setModo] = useState<PJEDownloadMode>('by_task');
@@ -197,6 +235,7 @@ export default function PaginaDownloadPJE() {
 
   const handleLogout = useCallback(() => {
     addLog('info', 'AUTH', 'Logout — limpando toda a sessão');
+    localStorage.removeItem(SESSAO_STORAGE_KEY);
     cancelActiveOperations();
     resetarFormulario();
     setSessao({ autenticado: false });
@@ -426,7 +465,8 @@ export default function PaginaDownloadPJE() {
     setResultado(null);
 
     const params: GerarPlanilhaParams = {
-      credentials: credenciais!,
+      // Após F5 não há senha em memória — o backend reusa a sessão via pjeSessionId.
+      credentials: credenciais ?? undefined,
       fonte: modo === 'by_task' ? 'by_task' : 'by_tag',
       pjeSessionId: sessao.sessionId,
       pjeProfileIndex: sessao.perfilSelecionado?.indice,
@@ -524,7 +564,14 @@ export default function PaginaDownloadPJE() {
           <p className="mt-1.5 text-sm text-slate-500">Baixe processos e gere planilhas do PJE/TJBA com poucos cliques.</p>
         </div>
 
-        {!mostrandoDownload && (
+        {restaurando && (
+          <div className="flex flex-col items-center gap-3 py-16 text-slate-500">
+            <Loader2 size={24} className="animate-spin text-navy-600" />
+            <p className="text-sm">Restaurando sessão…</p>
+          </div>
+        )}
+
+        {!restaurando && !mostrandoDownload && (
           <div key={etapa} className="animate-fade">
             {(etapa === 'login' || etapa === '2fa') && (
               <EtapaLogin
@@ -548,7 +595,7 @@ export default function PaginaDownloadPJE() {
           </div>
         )}
 
-        {mostrandoDownload && (
+        {!restaurando && mostrandoDownload && (
           <div className="surface p-6 sm:p-7 animate-rise">
             {sessao.perfilSelecionado && !mostrandoResultado && (
               <div className="mb-6 border-b border-slate-100 pb-4">

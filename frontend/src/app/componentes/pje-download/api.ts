@@ -38,6 +38,12 @@ export async function enviar2FA(sessionId: string, code: string) {
   });
 }
 
+export async function validarSessao(sessionId: string) {
+  return request<{ valid: boolean; reason?: 'NOT_FOUND' | 'EXPIRED' }>(
+    `/api/pje/downloads/auth/validate-session?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+}
+
 export async function selecionarPerfil(sessionId: string, profileIndex: number) {
   return request<{
     tasks: Array<{ id: number; nome: string; quantidadePendente: number }>;
