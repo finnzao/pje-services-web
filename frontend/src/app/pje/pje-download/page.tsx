@@ -14,7 +14,7 @@ import { DownloadModeSelector } from '../../componentes/pje-download/DownloadMod
 import { DownloadAction } from '../../componentes/pje-download/DownloadAction';
 import { ExecutionStatus } from '../../componentes/pje-download/ExecutionStatus';
 import { ProfileBadge } from '../../componentes/pje-download/ProfileBadge';
-import { ListaTarefas } from '../../componentes/pje-download/ListaTarefas';
+import { ListaTarefas, type TarefaSelecionada } from '../../componentes/pje-download/ListaTarefas';
 import { ListaEtiquetas } from '../../componentes/pje-download/ListaEtiquetas';
 import { ListaProcessos, normalizarCNJ } from '../../componentes/pje-download/ListaProcessos';
 import { SeletorTipoDocumento } from '../../componentes/pje-download/SeletorTipoDocumento';
@@ -101,9 +101,19 @@ export default function PaginaDownloadPJE() {
 
   const [servicoAtivo, setServicoAtivo] = useState<ServicoAtivo | null>(null);
   const [modo, setModo] = useState<PJEDownloadMode>('by_task');
-  const [tarefaSelecionada, setTarefaSelecionada] = useState('');
-  const [isFavorite, setIsFavorite] = useState(false);
-  const [etiquetaSelecionada, setEtiquetaSelecionada] = useState<number | null>(null);
+  const [tarefasSelecionadas, setTarefasSelecionadas] = useState<TarefaSelecionada[]>([]);
+  const [etiquetasSelecionadas, setEtiquetasSelecionadas] = useState<number[]>([]);
+
+  const toggleTarefa = useCallback((nome: string, favorita: boolean) => {
+    setTarefasSelecionadas((prev) => {
+      const existe = prev.some((t) => t.nome === nome && t.favorita === favorita);
+      return existe ? prev.filter((t) => !(t.nome === nome && t.favorita === favorita)) : [...prev, { nome, favorita }];
+    });
+  }, []);
+
+  const toggleEtiqueta = useCallback((id: number) => {
+    setEtiquetasSelecionadas((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
 
   const [numerosProcessoRaw, setNumerosProcessoRaw] = useState('');
   const [tiposSelecionados, setTiposSelecionados] = useState<string[]>([]);
@@ -134,10 +144,13 @@ export default function PaginaDownloadPJE() {
       .filter((n): n is string => Boolean(n));
   }, [numerosProcessoRaw]);
 
+  // Soma estimada — processos repetidos entre tarefas são deduplicados no servidor.
   const totalProcessosTarefa = useMemo(() => {
-    const lista = isFavorite ? (sessao.tarefasFavoritas || []) : (sessao.tarefas || []);
-    return lista.find((t) => t.nome === tarefaSelecionada)?.quantidadePendente || 0;
-  }, [sessao.tarefas, sessao.tarefasFavoritas, tarefaSelecionada, isFavorite]);
+    return tarefasSelecionadas.reduce((acc, sel) => {
+      const lista = sel.favorita ? (sessao.tarefasFavoritas || []) : (sessao.tarefas || []);
+      return acc + (lista.find((t) => t.nome === sel.nome)?.quantidadePendente || 0);
+    }, 0);
+  }, [sessao.tarefas, sessao.tarefasFavoritas, tarefasSelecionadas]);
 
   const isDownloadActive = downloadProgress && !['done', 'error', 'cancelled'].includes(downloadProgress.phase);
   const isAdvogadosActive = jobAdvogados && !['completed', 'failed', 'cancelled'].includes(jobAdvogados.status);
@@ -156,9 +169,8 @@ export default function PaginaDownloadPJE() {
     cancelActiveOperations();
     setServicoAtivo(null);
     setModo('by_task');
-    setTarefaSelecionada('');
-    setIsFavorite(false);
-    setEtiquetaSelecionada(null);
+    setTarefasSelecionadas([]);
+    setEtiquetasSelecionadas([]);
     setNumerosProcessoRaw('');
     setTiposSelecionados([]);
     setExecucao(ESTADO_EXECUCAO_INICIAL);
@@ -297,12 +309,15 @@ export default function PaginaDownloadPJE() {
     };
 
     if (modo === 'by_task') {
-      params.taskName = tarefaSelecionada;
-      params.isFavorite = isFavorite;
+      params.taskNames = tarefasSelecionadas.map((t) => ({ name: t.nome, isFavorite: t.favorita }));
+      // Rótulo para nome da pasta e relatório.
+      params.taskName = tarefasSelecionadas.map((t) => t.nome).join(' + ');
     } else if (modo === 'by_tag') {
-      params.tagId = etiquetaSelecionada!;
-      const etq = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada);
-      params.tagName = etq?.nomeTag;
+      params.tagIds = etiquetasSelecionadas;
+      params.tagName = (sessao.etiquetas || [])
+        .filter((e) => etiquetasSelecionadas.includes(e.id))
+        .map((e) => e.nomeTag)
+        .join(' + ');
     } else if (modo === 'by_number') {
       params.processNumbers = numerosValidados;
     }
@@ -371,7 +386,7 @@ export default function PaginaDownloadPJE() {
         });
       }
     }
-  }, [modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, numerosValidados, tiposSelecionados]);
+  }, [modo, tarefasSelecionadas, etiquetasSelecionadas, sessao, numerosValidados, tiposSelecionados]);
 
   const handleCancelarDownload = useCallback(() => { managerRef.current?.cancel(); }, []);
 
@@ -418,11 +433,13 @@ export default function PaginaDownloadPJE() {
     };
 
     if (modo === 'by_task') {
-      params.taskName = tarefaSelecionada;
-      params.isFavorite = isFavorite;
+      params.taskNames = tarefasSelecionadas.map((t) => ({ name: t.nome, isFavorite: t.favorita }));
     } else {
-      params.tagId = etiquetaSelecionada!;
-      params.tagName = (sessao.etiquetas || []).find((e) => e.id === etiquetaSelecionada)?.nomeTag;
+      params.tagIds = etiquetasSelecionadas;
+      params.tagName = (sessao.etiquetas || [])
+        .filter((e) => etiquetasSelecionadas.includes(e.id))
+        .map((e) => e.nomeTag)
+        .join(' + ');
     }
 
     if (filtrosAdv.length > 0) params.filtros = filtrosAdv;
@@ -435,7 +452,7 @@ export default function PaginaDownloadPJE() {
       setErro(err.message || 'Erro ao iniciar geração');
       setCarregando(false);
     }
-  }, [credenciais, modo, tarefaSelecionada, isFavorite, etiquetaSelecionada, sessao, filtrosAdv, startPolling]);
+  }, [credenciais, modo, tarefasSelecionadas, etiquetasSelecionadas, sessao, filtrosAdv, startPolling]);
 
   const handleCancelarAdvogados = useCallback(async () => {
     if (!jobAdvogados) return;
@@ -608,8 +625,8 @@ export default function PaginaDownloadPJE() {
                       onSelecionar={(s) => {
                         setServicoAtivo(s);
                         setErro(null);
-                        setTarefaSelecionada('');
-                        setEtiquetaSelecionada(null);
+                        setTarefasSelecionadas([]);
+                        setEtiquetasSelecionadas([]);
                         setNumerosProcessoRaw('');
                         setTiposSelecionados([]);
                         if (s === 'advogados' && modo === 'by_number') setModo('by_task');
@@ -627,8 +644,8 @@ export default function PaginaDownloadPJE() {
                         onSelecionar={(m) => {
                           if (servicoAtivo === 'advogados' && m === 'by_number') return;
                           setModo(m);
-                          setTarefaSelecionada('');
-                          setEtiquetaSelecionada(null);
+                          setTarefasSelecionadas([]);
+                          setEtiquetasSelecionadas([]);
                           setNumerosProcessoRaw('');
                         }}
                         desabilitado={!servicoAtivo}
@@ -641,7 +658,7 @@ export default function PaginaDownloadPJE() {
                         <div className="mb-3 flex items-center gap-2">
                           <span className="num-badge">3</span>
                           <span className="eyebrow">
-                            {modo === 'by_task' ? 'Selecione a tarefa' : modo === 'by_tag' ? 'Selecione a etiqueta' : 'Cole a lista de processos'}
+                            {modo === 'by_task' ? 'Selecione a(s) tarefa(s)' : modo === 'by_tag' ? 'Selecione a(s) etiqueta(s)' : 'Cole a lista de processos'}
                           </span>
                         </div>
 
@@ -650,14 +667,15 @@ export default function PaginaDownloadPJE() {
                             <ListaTarefas
                               tarefas={sessao.tarefas || []}
                               tarefasFavoritas={sessao.tarefasFavoritas || []}
-                              tarefaSelecionada={tarefaSelecionada}
-                              isFavorite={isFavorite}
-                              onSelecionar={(nome, fav) => { setTarefaSelecionada(nome); setIsFavorite(fav); }}
+                              selecionadas={tarefasSelecionadas}
+                              onToggle={toggleTarefa}
                             />
-                            {tarefaSelecionada && (
+                            {tarefasSelecionadas.length > 0 && (
                               <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3">
-                                <span className="truncate text-sm font-semibold text-ink">{tarefaSelecionada}</span>
-                                <span className="chip shrink-0 bg-navy-100 text-navy-700">{totalProcessosTarefa} processo(s)</span>
+                                <span className="truncate text-sm font-semibold text-ink">
+                                  {tarefasSelecionadas.map((t) => t.nome).join(' + ')}
+                                </span>
+                                <span className="chip shrink-0 bg-navy-100 text-navy-700">~{totalProcessosTarefa} processo(s)</span>
                               </div>
                             )}
                           </>
@@ -666,9 +684,15 @@ export default function PaginaDownloadPJE() {
                         {modo === 'by_tag' && (
                           <ListaEtiquetas
                             etiquetas={sessao.etiquetas || []}
-                            selecionada={etiquetaSelecionada}
-                            onSelecionar={setEtiquetaSelecionada}
+                            selecionadas={etiquetasSelecionadas}
+                            onToggle={toggleEtiqueta}
                           />
+                        )}
+
+                        {((modo === 'by_task' && tarefasSelecionadas.length > 1) || (modo === 'by_tag' && etiquetasSelecionadas.length > 1)) && (
+                          <p className="mt-2 text-xs text-slate-400">
+                            Processo que aparecer em mais de uma {modo === 'by_task' ? 'tarefa' : 'etiqueta'} é processado uma única vez.
+                          </p>
                         )}
 
                         {modo === 'by_number' && (
@@ -703,8 +727,8 @@ export default function PaginaDownloadPJE() {
                       <DownloadAction
                         servico={servicoAtivo}
                         modo={modo}
-                        tarefaSelecionada={tarefaSelecionada}
-                        etiquetaSelecionada={etiquetaSelecionada}
+                        numTarefas={tarefasSelecionadas.length}
+                        numEtiquetas={etiquetasSelecionadas.length}
                         numerosProcesso={numerosValidados}
                         tiposSelecionados={tiposSelecionados}
                         carregando={carregando}

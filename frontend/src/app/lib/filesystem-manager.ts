@@ -40,6 +40,7 @@ export function buildFolderName(params: {
   mode: 'by_task' | 'by_tag' | 'by_number' | 'by_search';
   taskName?: string;
   tagName?: string;
+  label?: string;
 }): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
@@ -49,7 +50,7 @@ export function buildFolderName(params: {
     by_task: sanitizeFolderToken(params.taskName || 'Tarefa'),
     by_tag: sanitizeFolderToken(params.tagName || 'Etiqueta'),
     by_number: 'Processos_Manual',
-    by_search: 'Pesquisa_Geral',
+    by_search: sanitizeFolderToken(params.label || 'Pesquisa_Geral'),
   };
 
   return `PJE_${labels[params.mode]}_${date}_${time}`;
@@ -62,6 +63,7 @@ export class FileSystemManager {
   private totalBytes = 0;
   private _method: StorageMethod = 'zip';
   private lastZip: { blob: Blob; fileName: string } | null = null;
+  private initialized = false;
 
   static isSupported(): boolean {
     return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
@@ -131,6 +133,9 @@ export class FileSystemManager {
   }
 
   async initialize(options?: { skipPicker?: boolean }): Promise<StorageMethod> {
+    if (this.initialized) return this._method;
+    this.initialized = true;
+
     if (!FileSystemManager.isSupported() || options?.skipPicker) {
       this._method = 'zip';
       return this._method;
@@ -152,6 +157,29 @@ export class FileSystemManager {
   async createBatchFolder(folderName: string): Promise<void> {
     if (this._method !== 'fsapi' || !this.dirHandle) return;
     this.batchDirHandle = await this.dirHandle.getDirectoryHandle(folderName, { create: true });
+  }
+
+  /** Remove uma subpasta vazia (ex: parte sem processos encontrados). No-op fora do modo fsapi. */
+  async removeBatchFolder(folderName: string): Promise<void> {
+    if (this._method !== 'fsapi' || !this.dirHandle) return;
+    try {
+      await (this.dirHandle as any).removeEntry(folderName, { recursive: true });
+    } catch {  }
+  }
+
+  /**
+   * Salva um arquivo na raiz da pasta escolhida pelo usuário (fora de qualquer subpasta de lote).
+   * Usado para o relatório final de uma pesquisa múltipla. Fora do modo fsapi, dispara um download avulso.
+   */
+  async saveRootFile(fileName: string, blob: Blob): Promise<void> {
+    const safeName = sanitizeFileName(fileName);
+    if (this._method === 'fsapi' && this.dirHandle) {
+      const fileHandle = await this.dirHandle.getFileHandle(safeName, { create: true });
+      const writable = await fileHandle.createWritable();
+      try { await writable.write(blob); } finally { await writable.close(); }
+      return;
+    }
+    this.triggerAnchorDownload(blob, safeName);
   }
 
   async saveFile(fileName: string, blob: Blob): Promise<SaveResult> {
@@ -219,6 +247,7 @@ export class FileSystemManager {
     this.lastZip = null;
     this.dirHandle = null;
     this.batchDirHandle = null;
+    this.initialized = false;
   }
 
   private reset(): void {

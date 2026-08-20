@@ -8,11 +8,11 @@ import { safeStr } from './types';
 
 interface ListaEtiquetasProps {
   etiquetas: EtiquetaPJE[];
-  selecionada: number | null;
-  onSelecionar: (id: number) => void;
+  selecionadas: number[];
+  onToggle: (id: number) => void;
 }
 
-export function ListaEtiquetas({ etiquetas, selecionada, onSelecionar }: ListaEtiquetasProps) {
+export function ListaEtiquetas({ etiquetas, selecionadas, onToggle }: ListaEtiquetasProps) {
   const [busca, setBusca] = React.useState('');
 
   const filtradas = useMemo(() => {
@@ -39,12 +39,12 @@ export function ListaEtiquetas({ etiquetas, selecionada, onSelecionar }: ListaEt
       ) : (
         <div className="scroll-area max-h-72 space-y-1.5 overflow-y-auto pr-1">
           {filtradas.map((etq, idx) => {
-            const on = selecionada === etq.id;
+            const on = selecionadas.includes(etq.id);
             return (
               <button
                 key={`tag-${etq.id}-${idx}`}
                 type="button"
-                onClick={() => onSelecionar(etq.id)}
+                onClick={() => onToggle(etq.id)}
                 className={`row flex items-center gap-2.5 px-3.5 py-3 ${on ? 'row-on' : ''}`}
               >
                 <Tag size={13} className={on ? 'text-navy-700' : etq.favorita ? 'text-brass-400' : 'text-slate-400'} />

@@ -62,6 +62,9 @@ export interface GerarPlanilhaAdvogadosDTO {
   credentials: { cpf: string; password: string };
   fonte: 'by_task' | 'by_tag'; taskName?: string; isFavorite?: boolean;
   tagId?: number; tagName?: string; pjeProfileIndex?: number; pjeSessionId?: string;
+  /** Seleção múltipla — quando presentes, têm precedência sobre taskName/tagId. */
+  taskNames?: Array<{ name: string; isFavorite?: boolean }>;
+  tagIds?: number[];
   filtro?: FiltroAdvogado;
   filtros?: FiltroAdvogado[];
 }

@@ -8,6 +8,9 @@ export interface GerarPlanilhaParams {
   isFavorite?: boolean;
   tagId?: number;
   tagName?: string;
+  /** Seleção múltipla — têm precedência sobre taskName/tagId no backend. */
+  taskNames?: Array<{ name: string; isFavorite?: boolean }>;
+  tagIds?: number[];
   pjeProfileIndex?: number;
   pjeSessionId?: string;
   filtros?: FiltroAdvogado[];

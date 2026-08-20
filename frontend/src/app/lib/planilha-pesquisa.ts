@@ -14,6 +14,7 @@ export interface PlanilhaPesquisaParams {
   apiBase: string;
   sessionId: string;
   criteria: SearchCriteria;
+  label?: string;
 }
 
 const COLUNAS = [
@@ -187,6 +188,17 @@ function stamp(): string {
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}h${p(now.getMinutes())}`;
 }
 
+function sanitizeLabel(label: string): string {
+  return label
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9 _-]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .trim()
+    .slice(0, 50);
+}
+
 export class PlanilhaPesquisaManager {
   private es: EventSource | null = null;
   private cancelRequested = false;
@@ -195,6 +207,7 @@ export class PlanilhaPesquisaManager {
   private rows: SearchResultRow[] = [];
   private streamId: string | null = null;
   private apiBaseResolved = '';
+  private label?: string;
 
   get isRunning(): boolean { return this.es !== null; }
 
@@ -218,6 +231,7 @@ export class PlanilhaPesquisaManager {
     this.rows = [];
     this.streamId = null;
     this.apiBaseResolved = resolveBaseUrl(params.apiBase);
+    this.label = params.label;
 
     const progress: PesquisaProgress = {
       phase: 'initializing',
@@ -304,7 +318,8 @@ export class PlanilhaPesquisaManager {
 
           if (this.rows.length > 0) {
             const blob = await gerarPlanilhaBlob(this.rows);
-            triggerDownload(blob, `Pesquisa_Geral_${stamp()}.xlsx`);
+            const label = this.label ? sanitizeLabel(this.label) : 'Geral';
+            triggerDownload(blob, `Pesquisa_${label}_${stamp()}.xlsx`);
           }
 
           progress.phase = 'done';

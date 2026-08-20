@@ -274,11 +274,12 @@ export async function streamRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: {
     sessionId: string; mode: string;
     taskName?: string; tagId?: string; isFavorite?: string;
+    taskNames?: string; tagIds?: string;
     processNumbers?: string; documentTypes?: string; criteria?: string;
   } }>(
     '/stream-batch', async (request: FastifyRequest, reply: FastifyReply) => {
       const query = request.query as any;
-      const { sessionId, mode, taskName, tagId, isFavorite, processNumbers, documentTypes, criteria } = query;
+      const { sessionId, mode, taskName, tagId, isFavorite, taskNames, tagIds, processNumbers, documentTypes, criteria } = query;
 
       if (!sessionId) return reply.status(400).send({ success: false, error: { code: 'MISSING_SESSION', message: 'sessionId e obrigatorio.', statusCode: 400 } });
       const session = sessionStore.get(sessionId);
@@ -335,13 +336,39 @@ export async function streamRoutes(fastify: FastifyInstance) {
         const tipoPares = expandSelectedTypes(documentTypesArray);
         const totalTipos = tipoPares.length;
 
-        const processos = await extractor.listProcesses(mode, {
-          taskName, tagId: tagId ? parseInt(tagId, 10) : undefined,
-          isFavorite: isFavorite === 'true',
-          processNumbers: processNumbersArray,
-          searchCriteria: parseCriteriaQuery(criteria),
-          onCancelled: () => cancelled,
-        });
+        // Fontes múltiplas (várias tarefas ou etiquetas); fallback para os params singulares.
+        let fontes: Array<{ taskName?: string; isFavorite?: boolean; tagId?: number }>;
+        if (mode === 'by_task') {
+          let lista: Array<{ name: string; isFavorite?: boolean }> = [];
+          try { lista = taskNames ? JSON.parse(taskNames) : []; } catch {  }
+          lista = Array.isArray(lista) ? lista.filter((t) => t?.name?.trim()) : [];
+          fontes = lista.length > 0
+            ? lista.map((t) => ({ taskName: t.name, isFavorite: t.isFavorite === true }))
+            : [{ taskName, isFavorite: isFavorite === 'true' }];
+        } else if (mode === 'by_tag') {
+          const ids = (tagIds ? String(tagIds).split(',') : [tagId])
+            .map((s: string) => parseInt(String(s), 10)).filter((n: number) => Number.isFinite(n) && n > 0);
+          fontes = ids.map((id: number) => ({ tagId: id }));
+        } else {
+          fontes = [{}];
+        }
+
+        // Dedup por número do processo: repetido em outra tarefa/etiqueta é baixado uma única vez.
+        const processos: Awaited<ReturnType<typeof extractor.listProcesses>> = [];
+        const seenProcs = new Set<string>();
+        for (const fonte of fontes) {
+          if (cancelled) break;
+          const lote = await extractor.listProcesses(mode, {
+            ...fonte,
+            processNumbers: processNumbersArray,
+            searchCriteria: parseCriteriaQuery(criteria),
+            onCancelled: () => cancelled,
+          });
+          for (const p of lote) {
+            const key = p.numeroProcesso.replace(/\D/g, '') || `id:${p.idProcesso}`;
+            if (!seenProcs.has(key)) { seenProcs.add(key); processos.push(p); }
+          }
+        }
 
         send('listing', {
           total: processos.length,

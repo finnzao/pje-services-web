@@ -7,18 +7,19 @@ import type { TarefaPJE } from './types';
 
 type Aba = 'todas' | 'favoritas';
 
+export interface TarefaSelecionada { nome: string; favorita: boolean; }
+
 interface ListaTarefasProps {
   tarefas: TarefaPJE[];
   tarefasFavoritas: TarefaPJE[];
-  tarefaSelecionada: string;
-  isFavorite: boolean;
-  onSelecionar: (nome: string, favorita: boolean) => void;
+  selecionadas: TarefaSelecionada[];
+  onToggle: (nome: string, favorita: boolean) => void;
 }
 
 const VISIVEIS_INICIAL = 10;
 
 export function ListaTarefas({
-  tarefas, tarefasFavoritas, tarefaSelecionada, isFavorite, onSelecionar,
+  tarefas, tarefasFavoritas, selecionadas, onToggle,
 }: ListaTarefasProps) {
   const [aba, setAba] = useState<Aba>('todas');
   const [busca, setBusca] = useState('');
@@ -52,8 +53,8 @@ export function ListaTarefas({
         <Info size={14} className="mt-0.5 flex-shrink-0" />
         <span>
           {aba === 'favoritas'
-            ? <><strong>Minhas tarefas</strong> são as marcadas com estrela no PJE.</>
-            : <><strong>Todas as tarefas</strong> mostra a lista completa do seu perfil.</>}
+            ? <><strong>Minhas tarefas</strong> são as marcadas com estrela no PJE. Clique para selecionar uma ou mais; clique de novo para remover.</>
+            : <><strong>Todas as tarefas</strong> mostra a lista completa do seu perfil. Clique para selecionar uma ou mais; clique de novo para remover.</>}
         </span>
       </div>
 
@@ -66,13 +67,13 @@ export function ListaTarefas({
       ) : (
         <div className="scroll-area max-h-80 space-y-1.5 overflow-y-auto pr-1">
           {visiveis.map((tarefa) => {
-            const sel = tarefaSelecionada === tarefa.nome && isFavorite === (aba === 'favoritas');
+            const sel = selecionadas.some((s) => s.nome === tarefa.nome && s.favorita === (aba === 'favoritas'));
             const muitos = tarefa.quantidadePendente > 500;
             return (
               <button
                 key={`${aba}-${tarefa.id}-${tarefa.nome}`}
                 type="button"
-                onClick={() => onSelecionar(tarefa.nome, aba === 'favoritas')}
+                onClick={() => onToggle(tarefa.nome, aba === 'favoritas')}
                 className={`row flex items-center justify-between gap-2 px-3.5 py-3 ${sel ? 'row-on' : ''}`}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-2">

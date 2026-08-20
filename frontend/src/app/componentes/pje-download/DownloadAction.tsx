@@ -7,8 +7,8 @@ import type { ServicoAtivo, PJEDownloadMode } from './types';
 interface DownloadActionProps {
   servico: ServicoAtivo | null;
   modo: PJEDownloadMode;
-  tarefaSelecionada: string;
-  etiquetaSelecionada: number | null;
+  numTarefas: number;
+  numEtiquetas: number;
   numerosProcesso: string[];
   tiposSelecionados?: string[];
   carregando: boolean;
@@ -19,21 +19,21 @@ interface DownloadActionProps {
 
 function validarFluxo(
   servico: ServicoAtivo | null, modo: PJEDownloadMode,
-  tarefaSelecionada: string, etiquetaSelecionada: number | null, numerosProcesso: string[],
+  numTarefas: number, numEtiquetas: number, numerosProcesso: string[],
 ): { valido: boolean; mensagem: string } {
   if (!servico) return { valido: false, mensagem: 'Selecione um serviço para continuar' };
-  if (modo === 'by_task' && !tarefaSelecionada) return { valido: false, mensagem: 'Selecione uma tarefa para continuar' };
-  if (modo === 'by_tag' && !etiquetaSelecionada) return { valido: false, mensagem: 'Selecione uma etiqueta para continuar' };
+  if (modo === 'by_task' && numTarefas === 0) return { valido: false, mensagem: 'Selecione ao menos uma tarefa para continuar' };
+  if (modo === 'by_tag' && numEtiquetas === 0) return { valido: false, mensagem: 'Selecione ao menos uma etiqueta para continuar' };
   if (modo === 'by_number' && numerosProcesso.length === 0) return { valido: false, mensagem: 'Cole ao menos um número CNJ válido' };
   return { valido: true, mensagem: '' };
 }
 
 export function DownloadAction({
-  servico, modo, tarefaSelecionada, etiquetaSelecionada,
+  servico, modo, numTarefas, numEtiquetas,
   numerosProcesso, tiposSelecionados = [],
   carregando, fsApiSupported = false, totalProcessos = 0, onClick,
 }: DownloadActionProps) {
-  const { valido, mensagem } = validarFluxo(servico, modo, tarefaSelecionada, etiquetaSelecionada, numerosProcesso);
+  const { valido, mensagem } = validarFluxo(servico, modo, numTarefas, numEtiquetas, numerosProcesso);
   const habilitado = valido && !carregando;
   const isAdvogados = servico === 'advogados';
   const numTipos = tiposSelecionados.filter((s) => s && s !== 'Selecione').length;
@@ -43,8 +43,8 @@ export function DownloadAction({
     if (!valido) return isAdvogados ? 'Gerar planilha' : 'Baixar processos';
     if (isAdvogados) return 'Gerar planilha de advogados';
     const sufixo = numTipos > 0 ? ` × ${numTipos} tipo(s)` : '';
-    if (modo === 'by_task' && tarefaSelecionada) return `Baixar ${totalProcessos} processo(s)${sufixo}`;
-    if (modo === 'by_tag' && etiquetaSelecionada) return `Baixar processos da etiqueta${sufixo}`;
+    if (modo === 'by_task' && numTarefas > 0) return `Baixar ${totalProcessos} processo(s) de ${numTarefas} tarefa(s)${sufixo}`;
+    if (modo === 'by_tag' && numEtiquetas > 0) return `Baixar processos de ${numEtiquetas} etiqueta(s)${sufixo}`;
     if (modo === 'by_number' && numerosProcesso.length > 0) return `Baixar ${numerosProcesso.length} processo(s)${sufixo}`;
     return fsApiSupported ? 'Escolher pasta e baixar' : 'Baixar como ZIP';
   };

@@ -34,9 +34,15 @@ export interface DownloadManagerParams {
   tagName?: string;
   tagId?: number;
   isFavorite?: boolean;
+  /** Seleção múltipla — quando presentes, têm precedência sobre taskName/tagId (que viram apenas rótulo). */
+  taskNames?: Array<{ name: string; isFavorite?: boolean }>;
+  tagIds?: number[];
   processNumbers?: string[];
   documentTypes?: string[];
   searchCriteria?: SearchCriteria;
+  label?: string;
+  /** Pula o relatório .txt individual deste lote (usado na Pesquisa Múltipla, que gera um relatório consolidado). */
+  skipReport?: boolean;
 }
 
 const MAX_CONCURRENT_FILE_DOWNLOADS = 3;
@@ -149,8 +155,8 @@ export class DownloadManager {
   private cancelRequested = false;
   private serverCancelled = false;
 
-  constructor() {
-    this.fs = new FileSystemManager();
+  constructor(fs?: FileSystemManager) {
+    this.fs = fs ?? new FileSystemManager();
     this.progress = this.initialProgress();
   }
 
@@ -194,6 +200,7 @@ export class DownloadManager {
         mode: params.mode,
         taskName: params.taskName,
         tagName: params.tagName,
+        label: params.label,
       });
       await this.fs.createBatchFolder(folderName);
 
@@ -206,8 +213,16 @@ export class DownloadManager {
       const sseUrl = new URL(`${base}/api/pje/downloads/stream-batch`);
       sseUrl.searchParams.set('sessionId', params.sessionId);
       sseUrl.searchParams.set('mode', params.mode);
-      if (params.taskName) sseUrl.searchParams.set('taskName', params.taskName);
-      if (params.tagId) sseUrl.searchParams.set('tagId', String(params.tagId));
+      if (params.taskNames?.length) {
+        sseUrl.searchParams.set('taskNames', JSON.stringify(params.taskNames));
+      } else if (params.taskName) {
+        sseUrl.searchParams.set('taskName', params.taskName);
+      }
+      if (params.tagIds?.length) {
+        sseUrl.searchParams.set('tagIds', params.tagIds.join(','));
+      } else if (params.tagId) {
+        sseUrl.searchParams.set('tagId', String(params.tagId));
+      }
       if (params.isFavorite) sseUrl.searchParams.set('isFavorite', 'true');
       if (params.processNumbers?.length) {
         sseUrl.searchParams.set('processNumbers', params.processNumbers.join(','));
@@ -241,16 +256,22 @@ export class DownloadManager {
     }
 
     try {
-      const report = this.buildReport(params, folderName);
-      await this.fs.saveReport(report);
+      if (!params.skipReport) {
+        const report = this.buildReport(params, folderName);
+        await this.fs.saveReport(report);
+      }
 
+      const semProcessos = this.progress.totalProcesses === 0;
       this.progress.phase = 'finalizing';
-      this.progress.message = method === 'fsapi'
-        ? `${this.progress.successCount} arquivos salvos em ${folderName}/`
-        : 'Gerando arquivo ZIP...';
+      this.progress.message = semProcessos
+        ? 'Nenhum processo encontrado para esta parte.'
+        : method === 'fsapi'
+          ? `${this.progress.successCount} arquivos salvos em ${folderName}/`
+          : 'Gerando arquivo ZIP...';
       onProgress({ ...this.progress });
 
       await this.fs.finalize(folderName);
+      if (semProcessos) await this.fs.removeBatchFolder(folderName);
     } catch (err) {
       this.abortController = null;
       this.streamId = null;

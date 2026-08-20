@@ -10,6 +10,7 @@ interface FormularioPesquisaProps {
   opcoes: SearchFormOptions;
   carregandoOpcoes?: boolean;
   desabilitado?: boolean;
+  ocultarNomeParte?: boolean;
 }
 
 function contarPalavras(valor?: string): number {
@@ -31,7 +32,7 @@ export function temAlgumCriterio(criteria: SearchCriteria): boolean {
 }
 
 export function FormularioPesquisa({
-  criteria, onChange, opcoes, carregandoOpcoes = false, desabilitado = false,
+  criteria, onChange, opcoes, carregandoOpcoes = false, desabilitado = false, ocultarNomeParte = false,
 }: FormularioPesquisaProps) {
   const [avancado, setAvancado] = React.useState(false);
 
@@ -51,21 +52,23 @@ export function FormularioPesquisa({
   return (
     <div className={wrap}>
       <div className="space-y-4">
-        <div>
-          <label className="label mb-1.5">Nome da Parte</label>
-          <input
-            type="text"
-            value={criteria.nomeParte || ''}
-            onChange={(e) => set('nomeParte')(e.target.value)}
-            placeholder="Ex: Polícia Civil do Estado da Bahia"
-            className="field"
-          />
-          {nomeParteInvalido && (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
-              <AlertCircle size={12} /> A pesquisa deve conter pelo menos duas palavras.
-            </p>
-          )}
-        </div>
+        {!ocultarNomeParte && (
+          <div>
+            <label className="label mb-1.5">Nome da Parte</label>
+            <input
+              type="text"
+              value={criteria.nomeParte || ''}
+              onChange={(e) => set('nomeParte')(e.target.value)}
+              placeholder="Ex: Polícia Civil do Estado da Bahia"
+              className="field"
+            />
+            {nomeParteInvalido && (
+              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
+                <AlertCircle size={12} /> A pesquisa deve conter pelo menos duas palavras.
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="label mb-1.5">Número do processo (por comarca)</label>

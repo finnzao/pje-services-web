@@ -27,13 +27,13 @@ export function advogadosRoutes(service: PjeAdvogadosService) {
           error: { code: 'INVALID_FONTE', message: 'Fonte deve ser by_task ou by_tag.', statusCode: 400 },
         });
       }
-      if (dto.fonte === 'by_task' && !dto.taskName?.trim()) {
+      if (dto.fonte === 'by_task' && !dto.taskName?.trim() && !dto.taskNames?.some((t) => t?.name?.trim())) {
         return reply.status(400).send({
           success: false,
           error: { code: 'MISSING_TASK', message: 'Nome da tarefa e obrigatorio.', statusCode: 400 },
         });
       }
-      if (dto.fonte === 'by_tag' && !dto.tagId) {
+      if (dto.fonte === 'by_tag' && !dto.tagId && !dto.tagIds?.length) {
         return reply.status(400).send({
           success: false,
           error: { code: 'MISSING_TAG', message: 'ID da etiqueta e obrigatorio.', statusCode: 400 },

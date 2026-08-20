@@ -182,11 +182,22 @@ export class PjeAdvogadosService {
     jobId: string,
   ): Promise<ProcessoAdvogados[]> {
     const processos: ProcessoAdvogados[] = [];
+    // Compartilhado entre todas as tarefas/etiquetas: processo repetido entra uma única vez.
     const seenIds = new Set<number>();
 
-    if (dto.fonte === 'by_task' && dto.taskName) {
-      const encoded = encodeURIComponent(dto.taskName.trim());
-      const endpoint = `painelUsuario/recuperarProcessosTarefaPendenteComCriterios/${encoded}/${dto.isFavorite === true}`;
+    const tarefas = dto.fonte === 'by_task'
+      ? (dto.taskNames?.filter((t) => t?.name?.trim()).length
+        ? dto.taskNames!.filter((t) => t?.name?.trim())
+        : dto.taskName ? [{ name: dto.taskName, isFavorite: dto.isFavorite }] : [])
+      : [];
+    const etiquetas = dto.fonte === 'by_tag'
+      ? (dto.tagIds?.length ? dto.tagIds : dto.tagId ? [dto.tagId] : [])
+      : [];
+
+    for (const tarefa of tarefas) {
+      if (this.isCancelled(jobId)) break;
+      const encoded = encodeURIComponent(tarefa.name.trim());
+      const endpoint = `painelUsuario/recuperarProcessosTarefaPendenteComCriterios/${encoded}/${tarefa.isFavorite === true}`;
       let offset = 0;
       while (true) {
         if (this.isCancelled(jobId)) break;
@@ -206,9 +217,12 @@ export class PjeAdvogadosService {
         offset += PAGE_SIZE;
         await sleep(300);
       }
-    } else if (dto.fonte === 'by_tag' && dto.tagId) {
+    }
+
+    for (const tagId of etiquetas) {
+      if (this.isCancelled(jobId)) break;
       const totalStr = await pjeApiGet<string>(
-        session, `painelUsuario/etiquetas/${dto.tagId}/processos/total`,
+        session, `painelUsuario/etiquetas/${tagId}/processos/total`,
       );
       const total = parseInt(String(totalStr), 10) || 0;
       let offset = 0;
@@ -216,7 +230,7 @@ export class PjeAdvogadosService {
         if (this.isCancelled(jobId)) break;
         const entities = await pjeApiGet<any[]>(
           session,
-          `painelUsuario/etiquetas/${dto.tagId}/processos?limit=${PAGE_SIZE}&offset=${offset}`,
+          `painelUsuario/etiquetas/${tagId}/processos?limit=${PAGE_SIZE}&offset=${offset}`,
         );
         const arr = Array.isArray(entities) ? entities : [];
         if (arr.length === 0) break;
