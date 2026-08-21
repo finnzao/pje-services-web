@@ -81,7 +81,8 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
       .map((campo) => `${ROTULOS_FILTRO_FIXO[campo]}: ${criteria[campo]}`);
   }, [criteria]);
 
-  const fsApiSupported = typeof window !== 'undefined' && FileSystemManager?.isSupported?.();
+  const [fsApiSupported, setFsApiSupported] = useState(false);
+  useEffect(() => { setFsApiSupported(!!FileSystemManager?.isSupported?.()); }, []);
 
   useEffect(() => {
     let ativo = true;

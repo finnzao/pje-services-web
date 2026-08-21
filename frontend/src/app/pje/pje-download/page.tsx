@@ -171,7 +171,8 @@ export default function PaginaDownloadPJE() {
 
   const { addLog } = useUiLogs();
 
-  const fsApiSupported = typeof window !== 'undefined' && FileSystemManager?.isSupported?.();
+  const [fsApiSupported, setFsApiSupported] = useState(false);
+  useEffect(() => { setFsApiSupported(!!FileSystemManager?.isSupported?.()); }, []);
 
   const numerosValidados = useMemo(() => {
     return numerosProcessoRaw
