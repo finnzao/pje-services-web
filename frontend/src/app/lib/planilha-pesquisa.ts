@@ -1,4 +1,5 @@
 import type { SearchCriteria, SearchResultRow } from '../componentes/pje-download/types';
+import { resolveBaseUrl } from './download-manager';
 
 export interface PesquisaProgress {
   phase: 'initializing' | 'listing' | 'collecting' | 'finalizing' | 'cancelling' | 'done' | 'error' | 'cancelled';
@@ -27,14 +28,6 @@ const COLUNAS = [
   'Nó(s) atual(is)',
   'Última movimentação',
 ];
-
-function resolveBaseUrl(apiBase: string): string {
-  if (apiBase) return apiBase;
-  const envBase = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : undefined;
-  if (envBase) return envBase;
-  if (typeof window !== 'undefined') return window.location.origin;
-  return '';
-}
 
 function escapeXml(value: string): string {
   return (value || '')

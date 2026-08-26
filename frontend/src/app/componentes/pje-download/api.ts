@@ -1,5 +1,4 @@
 import { API_BASE, ApiError, request } from '../../lib/api-client';
-import type { PJEDownloadMode, PJEJobStatus } from './types';
 
 export { API_BASE, ApiError };
 
@@ -55,53 +54,3 @@ export async function selecionarPerfil(sessionId: string, profileIndex: number) 
   });
 }
 
-export interface CriarJobParams {
-  mode: PJEDownloadMode;
-  credentials: { cpf: string; password: string };
-  taskName?: string; isFavorite?: boolean;
-  tagId?: number; tagName?: string;
-  processNumbers?: string[];
-
-  documentTypes?: string[];
-
-  documentType?: string;
-  pjeProfileIndex?: number;
-  pjeSessionId?: string;
-}
-
-export async function criarJob(params: CriarJobParams) {
-  return request<{
-    id: string; userId: number; mode: PJEDownloadMode; status: PJEJobStatus;
-    progress: number; totalProcesses: number; successCount: number; failureCount: number;
-    files: any[]; errors: any[]; createdAt: string;
-  }>('/api/pje/downloads', {
-    method: 'POST',
-    body: JSON.stringify({ ...params, isFavorite: params.isFavorite === true }),
-  });
-}
-
-export async function listarJobs(limit = 20, offset = 0) {
-  return request<{
-    jobs: Array<{
-      id: string; userId: number; mode: PJEDownloadMode; status: PJEJobStatus;
-      progress: number; totalProcesses: number; successCount: number; failureCount: number;
-      files: any[]; errors: any[]; createdAt: string; startedAt?: string; completedAt?: string;
-    }>; total: number;
-  }>(`/api/pje/downloads?limit=${limit}&offset=${offset}`);
-}
-
-export async function obterProgresso(jobId: string) {
-  return request<{
-    jobId: string; status: PJEJobStatus; progress: number;
-    totalProcesses: number; successCount: number; failureCount: number;
-    message: string; files: any[]; errors: any[]; timestamp: number;
-  } | null>(`/api/pje/downloads/${jobId}/progress`);
-}
-
-export async function cancelarJob(jobId: string) {
-  return request<{ message: string }>(`/api/pje/downloads/${jobId}`, { method: 'DELETE' });
-}
-
-export async function listarTiposDocumento() {
-  return request<Array<{ nome: string; ids: string[] }>>('/api/pje/downloads/document-types');
-}

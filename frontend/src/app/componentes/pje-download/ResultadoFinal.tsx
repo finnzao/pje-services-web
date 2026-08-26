@@ -5,6 +5,7 @@ import {
   CheckCircle, AlertTriangle, XCircle, RefreshCw,
   UserCog, LogOut, Download, FileSpreadsheet,
 } from 'lucide-react';
+import { formatBytes } from '../../lib/format';
 
 type ResultadoStatus = 'success' | 'partial' | 'failed' | 'cancelled';
 
@@ -26,12 +27,6 @@ const VISUAL: Record<ResultadoStatus, { icone: React.ReactNode; borda: string; f
   failed:    { icone: <XCircle size={36} className="text-red-600" />,          borda: 'border-red-200',     fundo: 'bg-red-50',     texto: 'text-red-800' },
   cancelled: { icone: <XCircle size={36} className="text-slate-500" />,        borda: 'border-slate-300',   fundo: 'bg-slate-50',   texto: 'text-slate-700' },
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export function ResultadoFinal({
   status, titulo, mensagem, resumo, tipoServico,

@@ -39,6 +39,7 @@ import type {
 import { logger, ESTADO_EXECUCAO_INICIAL } from '../../componentes/pje-download/types';
 
 import { FileSystemManager } from '../../lib/filesystem-manager';
+import { formatBytes } from '../../lib/format';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
 
 function isSessionExpiredError(err: unknown): boolean {
@@ -59,12 +60,6 @@ function extrairMensagemErro(err: unknown): string {
     return 'Não foi possível conectar ao servidor.';
   if (err instanceof Error) return err.message;
   return 'Erro desconhecido.';
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // A senha NUNCA é persistida — só a sessão (sessionId, usuário, perfil, tarefas, etiquetas).

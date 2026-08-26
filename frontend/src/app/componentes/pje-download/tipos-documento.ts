@@ -66,11 +66,3 @@ export function listDocumentTypes(): TipoDocumentoUI[] {
   ];
 }
 
-export function validateDocumentTypes(selecionados: string[]): {
-  valid: boolean; unknown: string[];
-} {
-  const unknown = selecionados.filter(
-    (n) => n && n !== SELECIONE_SENTINEL && !(n in TIPO_DOCUMENTO_VALUES),
-  );
-  return { valid: unknown.length === 0, unknown };
-}

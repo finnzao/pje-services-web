@@ -1,4 +1,5 @@
 import { FileSystemManager, buildFolderName } from './filesystem-manager';
+import { formatBytes } from './format';
 import type { SearchCriteria } from '../componentes/pje-download/types';
 
 export interface DownloadProgress {
@@ -47,14 +48,7 @@ export interface DownloadManagerParams {
 
 const MAX_CONCURRENT_FILE_DOWNLOADS = 3;
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function resolveBaseUrl(apiBase: string): string {
+export function resolveBaseUrl(apiBase: string): string {
   if (apiBase) return apiBase;
   const envBase = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : undefined;
   if (envBase) return envBase;
