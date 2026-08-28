@@ -66,10 +66,19 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
   const downloadRef = useRef<DownloadManager | null>(null);
   const planilhaRef = useRef<PlanilhaPesquisaManager | null>(null);
 
-  const listaNomes = useMemo(
-    () => nomesFila.split('\n').map((s) => s.trim()).filter(Boolean),
-    [nomesFila],
-  );
+  const listaNomes = useMemo(() => {
+    const vistos = new Set<string>();
+    return nomesFila
+      .split('\n')
+      .map((s) => s.trim().replace(/\s+/g, ' '))
+      .filter(Boolean)
+      .filter((nome) => {
+        const chave = nome.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+        if (vistos.has(chave)) return false;
+        vistos.add(chave);
+        return true;
+      });
+  }, [nomesFila]);
   const nomesInvalidos = useMemo(
     () => listaNomes.filter((n) => contarPalavrasFila(n) < 2),
     [listaNomes],
