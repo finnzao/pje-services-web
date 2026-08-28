@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PJEAuthProxy } from '../services/auth/pje-auth-proxy.service';
-import { sessionStore } from '../services/pje-auth';
+import { PJEAuthProxy, sessionStore } from '../services/pje-auth';
 import { validatePjeSession } from '../../../shared/pje-api-client';
 import { ok } from '../../../shared/response';
 

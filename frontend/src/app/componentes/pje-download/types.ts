@@ -2,12 +2,6 @@ export type EtapaWizard = 'login' | '2fa' | 'perfil' | 'download' | 'historico';
 export type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number' | 'by_search';
 export type ServicoAtivo = 'processos' | 'advogados' | 'pesquisa';
 
-export type PJEJobStatus =
-  | 'pending' | 'authenticating' | 'awaiting_2fa'
-  | 'selecting_profile' | 'processing' | 'downloading'
-  | 'checking_integrity' | 'retrying'
-  | 'completed' | 'partial' | 'failed' | 'cancelling' | 'cancelled';
-
 export interface EstadoExecucao {
   isDownloading: boolean; downloadProgress: number; currentProcess: string;
   totalProcesses: number; completedProcesses: number; failedProcesses: number;
@@ -76,52 +70,9 @@ export interface SearchResultRow {
   ultimaMovimentacao: string;
 }
 
-export interface ParametrosDownload {
-  mode: PJEDownloadMode;
-  taskName?: string; isFavorite?: boolean;
-  tagId?: number; tagName?: string;
-  processNumbers?: string[];
-  documentTypes?: string[];
-  searchCriteria?: SearchCriteria;
-  pjeProfileIndex?: number;
-}
-
-export interface PJEDownloadedFile { processNumber: string; fileName: string; filePath: string; fileSize: number; downloadedAt: string; documentType?: string; }
-export interface PJEDownloadError { processNumber?: string; message: string; code?: string; timestamp: string; documentType?: string; }
-export interface DownloadJobResponse { id: string; userId: number; mode: PJEDownloadMode; status: PJEJobStatus; progress: number; totalProcesses: number; successCount: number; failureCount: number; files: PJEDownloadedFile[]; errors: PJEDownloadError[]; createdAt: string; startedAt?: string; completedAt?: string; }
-export interface PJEDownloadProgress { jobId: string; status: PJEJobStatus; progress: number; totalProcesses: number; successCount: number; failureCount: number; currentProcess?: string; files: PJEDownloadedFile[]; errors: PJEDownloadError[]; message: string; timestamp: number; }
 export interface EntradaLog { id: number; timestamp: string; nivel: 'info' | 'warn' | 'error' | 'success'; modulo: string; mensagem: string; dados?: unknown; }
 
 export interface FiltroAdvogado { tipo: 'nome' | 'oab'; valor: string; }
-
-interface StatusConfig { label: string; color: string; bg: string }
-
-export const STATUS_CONFIG: Record<PJEJobStatus, StatusConfig> = {
-  pending: { label: 'Na fila', color: 'text-slate-600', bg: 'bg-slate-100' },
-  authenticating: { label: 'Autenticando', color: 'text-blue-700', bg: 'bg-blue-50' },
-  awaiting_2fa: { label: 'Aguardando 2FA', color: 'text-amber-700', bg: 'bg-amber-50' },
-  selecting_profile: { label: 'Selecionando perfil', color: 'text-blue-700', bg: 'bg-blue-50' },
-  processing: { label: 'Processando', color: 'text-blue-700', bg: 'bg-blue-50' },
-  downloading: { label: 'Baixando', color: 'text-indigo-700', bg: 'bg-indigo-50' },
-  checking_integrity: { label: 'Verificando', color: 'text-purple-700', bg: 'bg-purple-50' },
-  retrying: { label: 'Retentando', color: 'text-orange-700', bg: 'bg-orange-50' },
-  completed: { label: 'Concluído', color: 'text-emerald-700', bg: 'bg-emerald-50' },
-  failed: { label: 'Falhou', color: 'text-red-700', bg: 'bg-red-50' },
-  cancelling: { label: 'Cancelando', color: 'text-amber-700', bg: 'bg-amber-50' },
-  cancelled: { label: 'Cancelado', color: 'text-slate-500', bg: 'bg-slate-100' },
-  partial: { label: 'Parcial', color: 'text-amber-700', bg: 'bg-amber-50' },
-};
-
-export const MODE_CONFIG: Record<PJEDownloadMode, { label: string; description: string }> = {
-  by_task: { label: 'Por Tarefa', description: 'Baixar processos de uma tarefa' },
-  by_tag: { label: 'Por Etiqueta', description: 'Baixar por etiqueta/marcador' },
-  by_number: { label: 'Por Número', description: 'Baixar lista de processos por nº CNJ' },
-  by_search: { label: 'Por Pesquisa', description: 'Pesquisa geral de processos' },
-};
-
-const ACTIVE_STATUSES: PJEJobStatus[] = ['pending', 'authenticating', 'awaiting_2fa', 'selecting_profile', 'processing', 'downloading', 'checking_integrity', 'retrying', 'cancelling'];
-
-export function isJobActive(status: PJEJobStatus): boolean { return ACTIVE_STATUSES.includes(status); }
 
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

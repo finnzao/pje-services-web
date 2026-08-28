@@ -9,10 +9,10 @@ import type { PerfilPJE, SearchCriteria, SearchFormOptions } from './types';
 import { FormularioPesquisa, nomePartePendente, nomeAdvogadoPendente, temAlgumCriterio } from './FormularioPesquisa';
 import { obterOpcoesPesquisa } from './api-pesquisa';
 import { FileSystemManager } from '../../lib/filesystem-manager';
+import { formatBytes } from '../../lib/format';
 import { DownloadManager, type DownloadProgress, type DownloadManagerParams } from '../../lib/download-manager';
 import { PlanilhaPesquisaManager, type PesquisaProgress } from '../../lib/planilha-pesquisa';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+import { API_BASE } from '../../lib/api-client';
 
 type Acao = 'download' | 'planilha';
 type StatusFila = 'pendente' | 'executando' | 'concluido' | 'erro' | 'cancelado';
@@ -40,12 +40,6 @@ const ROTULOS_FILTRO_FIXO: Partial<Record<keyof SearchCriteria, string>> = {
 };
 
 const OPCOES_VAZIAS: SearchFormOptions = { ufOab: [], jurisdicoes: [], orgaosJulgadores: [] };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps) {
   const [acao, setAcao] = useState<Acao>('planilha');
