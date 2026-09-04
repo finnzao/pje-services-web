@@ -4,7 +4,7 @@ import {
   FLAGS, PESOS_PRIORIDADE_PADRAO,
   calcularDiasParados, calcularPontuacao, classificarPrioridade,
   detectarMetas, distribuirPorServidor, extrairDigito,
-  montarMapaAtribuicoes, ordenarPorPrioridade, selecionarTarefas,
+  montarMapaAtribuicoes, ordenarPorPrioridade, parseDataPje, selecionarTarefas,
 } from '../modules/pje-download/services/planilha-digito/digito-core';
 import { extrairDataMovimento } from '../modules/pje-download/services/planilha-digito/planilha-digito.service';
 
@@ -195,6 +195,30 @@ describe('distribuirPorServidor', () => {
   });
 });
 
+describe('parseDataPje', () => {
+  it('aceita epoch em milissegundos e em segundos', () => {
+    expect(parseDataPje(1756684800000)).toBe('2025-09-01T00:00:00.000Z');
+    expect(parseDataPje(1756684800)).toBe('2025-09-01T00:00:00.000Z');
+  });
+
+  it('aceita ISO (inclusive offset "+0000" do Jackson) e dd/MM/yyyy', () => {
+    expect(parseDataPje('2014-09-12T23:26:35.290+0000')).toBe('2014-09-12T23:26:35.290+0000');
+    expect(parseDataPje('2026-08-01')).toBe('2026-08-01');
+    expect(parseDataPje('04/09/2026 10:30')).toBe('2026-09-04T10:30:00');
+    expect(parseDataPje('04/09/2026')).toBe('2026-09-04T00:00:00');
+  });
+
+  it('rejeita valores sem data', () => {
+    expect(parseDataPje(undefined)).toBeUndefined();
+    expect(parseDataPje(null)).toBeUndefined();
+    expect(parseDataPje('')).toBeUndefined();
+    expect(parseDataPje('sem data')).toBeUndefined();
+    expect(parseDataPje(0)).toBeUndefined();
+    expect(parseDataPje({})).toBeUndefined();
+    expect(parseDataPje('<html>login</html>')).toBeUndefined();
+  });
+});
+
 describe('extrairDataMovimento', () => {
   it('lê o payload em formatos comuns sem depender do contrato exato', () => {
     expect(extrairDataMovimento({ dataMovimento: '2026-08-01T00:00:00-03:00' })).toBe('2026-08-01T00:00:00-03:00');
@@ -203,10 +227,17 @@ describe('extrairDataMovimento', () => {
     expect(extrairDataMovimento('2026-08-01T10:00:00Z')).toBe('2026-08-01T10:00:00Z');
   });
 
-  it('retorna undefined para payloads sem data', () => {
+  it('lê epoch no topo, em campo conhecido e aninhado em movimento', () => {
+    expect(extrairDataMovimento(1756684800000)).toBe('2025-09-01T00:00:00.000Z');
+    expect(extrairDataMovimento({ dataHora: 1756684800000 })).toBe('2025-09-01T00:00:00.000Z');
+    expect(extrairDataMovimento({ movimento: { dataMovimento: 1756684800000 } })).toBe('2025-09-01T00:00:00.000Z');
+  });
+
+  it('retorna undefined para payloads sem data (inclusive HTML de erro)', () => {
     expect(extrairDataMovimento(null)).toBeUndefined();
     expect(extrairDataMovimento({})).toBeUndefined();
     expect(extrairDataMovimento('sem data aqui')).toBeUndefined();
+    expect(extrairDataMovimento('<html><body>login.seam</body></html>')).toBeUndefined();
     expect(extrairDataMovimento([])).toBeUndefined();
   });
 });

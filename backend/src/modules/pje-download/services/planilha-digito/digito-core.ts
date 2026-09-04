@@ -79,6 +79,29 @@ export function selecionarTarefas(todas: string[], ignoradas: string[] = []): st
   return todas.filter((t) => t.trim() && !ignoradasNorm.has(normalizarTexto(t)));
 }
 
+/**
+ * Normaliza uma data vinda do REST legado do PJE, que alterna entre epoch em
+ * milissegundos (Jackson), ISO 8601 (inclusive com offset "+0000") e o formato
+ * brasileiro "dd/MM/yyyy HH:mm". Devolve string parseável por new Date().
+ */
+export function parseDataPje(valor: unknown): string | undefined {
+  if (typeof valor === 'number' && Number.isFinite(valor) && valor > 0) {
+    const ms = valor < 1e11 ? valor * 1000 : valor;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+  }
+  if (typeof valor === 'string') {
+    const s = valor.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+    const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (br) {
+      const [, dd, mm, yyyy, hh = '00', mi = '00', ss = '00'] = br;
+      return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
+    }
+  }
+  return undefined;
+}
+
 export function calcularDiasParados(dataUltimoMovimento: string | undefined, agora: Date): number | null {
   if (!dataUltimoMovimento) return null;
   const data = new Date(dataUltimoMovimento);

@@ -9,7 +9,7 @@ import {
   FLAGS, PESOS_PRIORIDADE_PADRAO,
   calcularDiasParados, calcularPontuacao, classificarPrioridade,
   distribuirPorServidor, detectarMetas, extrairDigito,
-  montarMapaAtribuicoes, ordenarPorPrioridade, selecionarTarefas,
+  montarMapaAtribuicoes, ordenarPorPrioridade, parseDataPje, selecionarTarefas,
 } from './digito-core';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
 
@@ -26,16 +26,16 @@ function sleep(ms: number): Promise<void> {
 /** Extrai a data do payload de processos/{id}/ultimoMovimento sem depender do formato exato. */
 export function extrairDataMovimento(payload: unknown): string | undefined {
   const candidato = Array.isArray(payload) ? payload[0] : payload;
-  if (typeof candidato === 'string') {
-    return /\d{4}-\d{2}-\d{2}/.test(candidato) ? candidato : undefined;
-  }
+  const direto = parseDataPje(candidato);
+  if (direto) return direto;
   if (candidato && typeof candidato === 'object') {
     const obj = candidato as Record<string, unknown>;
-    for (const chave of ['dataMovimento', 'data', 'dataHora', 'dataUltimoMovimento', 'dataCriacao']) {
-      const valor = obj[chave];
-      if (typeof valor === 'string' && valor.trim()) return valor;
-      if (typeof valor === 'number' && Number.isFinite(valor)) return new Date(valor).toISOString();
+    for (const chave of ['dataMovimento', 'data', 'dataHora', 'dataUltimoMovimento', 'ultimoMovimento', 'dataCriacao']) {
+      const parsed = parseDataPje(obj[chave]);
+      if (parsed) return parsed;
     }
+    const movimento = obj['movimento'];
+    if (movimento && typeof movimento === 'object') return extrairDataMovimento(movimento);
   }
   return undefined;
 }
@@ -49,11 +49,22 @@ interface RegistroBruto {
   assuntoPrincipal?: string;
   classeJudicial?: string;
   dataChegada?: string;
+  /** Presente quando a própria listagem do painel já trouxe a última movimentação. */
+  ultimoMovimento?: string;
 }
 
 function lerString(obj: Record<string, unknown>, chave: string): string | undefined {
   const v = obj[chave];
   return typeof v === 'string' && v.trim() ? v : undefined;
+}
+
+/** Primeira data parseável entre as chaves informadas (aceita epoch, ISO ou dd/MM/yyyy). */
+function lerData(obj: Record<string, unknown>, ...chaves: string[]): string | undefined {
+  for (const chave of chaves) {
+    const parsed = parseDataPje(obj[chave]);
+    if (parsed) return parsed;
+  }
+  return undefined;
 }
 
 function lerEtiquetas(row: Record<string, unknown>): string[] {
@@ -227,6 +238,7 @@ export class PlanilhaDigitoService {
     // entra uma vez, com as demais tarefas registradas em outrasTarefas.
     const porNumero = new Map<string, RegistroBruto>();
     let feitas = 0;
+    let primeiraLinhaLogada = false;
 
     for (const tarefa of tarefas) {
       if (this.isCancelled(jobId)) break;
@@ -236,6 +248,10 @@ export class PlanilhaDigitoService {
           const numero = lerString(row, 'numeroProcesso');
           const idProcesso = typeof row['idProcesso'] === 'number' ? row['idProcesso'] : 0;
           if (!numero || !idProcesso) return;
+          if (!primeiraLinhaLogada) {
+            primeiraLinhaLogada = true;
+            console.log(`[PLANILHA-DIGITO] Campos da linha do painel: ${Object.keys(row).join(', ')}`);
+          }
           const chave = numero.replace(/\D/g, '');
           const existente = porNumero.get(chave);
           if (existente) {
@@ -252,7 +268,8 @@ export class PlanilhaDigitoService {
             etiquetas: lerEtiquetas(row),
             assuntoPrincipal: lerString(row, 'assuntoPrincipal'),
             classeJudicial: lerString(row, 'classeJudicial'),
-            dataChegada: lerString(row, 'dataChegada'),
+            dataChegada: lerData(row, 'dataChegada'),
+            ultimoMovimento: lerData(row, 'ultimoMovimento', 'dataUltimoMovimento'),
           });
         },
         () => this.isCancelled(jobId),
@@ -275,6 +292,18 @@ export class PlanilhaDigitoService {
     const resultados: ProcessoDigito[] = new Array<ProcessoDigito>(registros.length);
     let feitos = 0;
     let nextIndex = 0;
+    let viaListagem = 0;
+    let viaEndpoint = 0;
+    let semData = 0;
+    let amostrasLogadas = 0;
+
+    // Amostras da resposta crua ajudam a diagnosticar mudança de contrato no PJE.
+    const logAmostra = (numero: string, info: string) => {
+      if (amostrasLogadas < 3) {
+        amostrasLogadas++;
+        console.warn(`[PLANILHA-DIGITO] ultimoMovimento sem data para ${numero}: ${info}`);
+      }
+    };
 
     const worker = async (): Promise<void> => {
       while (true) {
@@ -282,16 +311,31 @@ export class PlanilhaDigitoService {
         const idx = nextIndex++;
         if (idx >= registros.length) return;
         const registro = registros[idx];
-        if (idx > 0) await sleep(STAGGER_MS);
-        if (this.isCancelled(jobId)) return;
 
-        let dataMovimento: string | undefined;
-        try {
-          const payload = await pjeApiGet<unknown>(session, `processos/${registro.idProcesso}/ultimoMovimento`);
-          dataMovimento = extrairDataMovimento(payload);
-        } catch {
-          dataMovimento = undefined;
+        // A listagem do painel já traz a última movimentação na maioria dos casos —
+        // o endpoint por processo é só fallback.
+        let dataMovimento = registro.ultimoMovimento;
+        if (dataMovimento) {
+          viaListagem++;
+        } else {
+          if (idx > 0) await sleep(STAGGER_MS);
+          if (this.isCancelled(jobId)) return;
+          try {
+            const payload = await pjeApiGet<unknown>(session, `processos/${registro.idProcesso}/ultimoMovimento`);
+            dataMovimento = extrairDataMovimento(payload);
+            if (dataMovimento) {
+              viaEndpoint++;
+            } else {
+              const amostra = typeof payload === 'string'
+                ? `texto "${payload.slice(0, 200).replace(/\s+/g, ' ')}"`
+                : `${typeof payload} ${JSON.stringify(payload)?.slice(0, 300)}`;
+              logAmostra(registro.numeroProcesso, amostra);
+            }
+          } catch (err) {
+            logAmostra(registro.numeroProcesso, `erro na requisicao: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
+        if (!dataMovimento) semData++;
 
         resultados[idx] = this.montarProcesso(registro, dataMovimento, agora, pesos);
         feitos++;
@@ -303,6 +347,11 @@ export class PlanilhaDigitoService {
       { length: Math.min(ENRICH_CONCURRENCY, registros.length) },
       () => worker(),
     ));
+
+    console.log(
+      `[PLANILHA-DIGITO] Última movimentação: ${viaListagem} via listagem, `
+      + `${viaEndpoint} via endpoint, ${semData} sem data (fallback dataChegada/sem dias).`,
+    );
 
     // Slots não processados (cancelamento no meio do lote) ainda entram na planilha.
     for (let i = 0; i < registros.length; i++) {

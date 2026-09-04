@@ -280,11 +280,15 @@ sobrescritos pontualmente no DTO (`pesos`).
    pelos dígitos do número CNJ** — processo em mais de uma tarefa entra uma vez, com as demais
    tarefas anotadas na planilha. Da listagem saem tarefa atual, etiquetas (`tagsProcessoList`) e
    assunto.
-2. **Dias parados (30→90%):** `GET processos/{id}/ultimoMovimento` por processo, com 4 workers e
-   stagger de 250 ms (mesmo pool da extração de advogados). "Dias parados" = dias desde a
-   **última movimentação** (não desde a chegada na tarefa); sem movimento disponível, cai para
-   `dataChegada` com a flag `SEM_ULTIMO_MOVIMENTO`. Número malformado não derruba o lote: vira
-   `NUMERO_MALFORMADO` em "Não atribuídos".
+2. **Dias parados (30→90%):** "dias parados" = dias desde a **última movimentação** (não desde a
+   chegada na tarefa). O valor vem preferencialmente da própria linha da listagem (campo
+   `ultimoMovimento`, que o card do painel exibe); quando ausente, fallback em
+   `GET processos/{id}/ultimoMovimento` por processo, com 4 workers e stagger de 250 ms (mesmo
+   pool da extração de advogados). As datas do REST legado alternam entre epoch, ISO e
+   `dd/MM/yyyy` — normalizadas por `parseDataPje`. Sem movimento disponível, cai para
+   `dataChegada` com a flag `SEM_ULTIMO_MOVIMENTO`; número malformado não derruba o lote (vira
+   `NUMERO_MALFORMADO` em "Não atribuídos"). O serviço loga os campos da primeira linha e
+   amostras de payload sem data, para diagnosticar mudanças de contrato do PJE.
 3. **Priorização por pesos** (`digito-core.ts`, calibrada pelo guia do Motor BI): etiqueta de
    meta mais pesada (saúde 40 > júri 35 > saneamento 30 > demais 20; prefixos `gab_meta`/
    `acv_meta`), tempo morto na régua CNJ de 100 dias (+25, escalando +5 a cada 30 dias, teto
