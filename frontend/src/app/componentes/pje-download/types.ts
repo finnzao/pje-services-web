@@ -1,6 +1,6 @@
 export type EtapaWizard = 'login' | '2fa' | 'perfil' | 'download' | 'historico';
 export type PJEDownloadMode = 'by_task' | 'by_tag' | 'by_number' | 'by_search';
-export type ServicoAtivo = 'processos' | 'advogados' | 'pesquisa';
+export type ServicoAtivo = 'processos' | 'advogados' | 'pesquisa' | 'digito';
 
 export interface EstadoExecucao {
   isDownloading: boolean; downloadProgress: number; currentProcess: string;

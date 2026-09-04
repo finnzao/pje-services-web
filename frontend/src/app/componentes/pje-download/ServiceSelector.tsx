@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Download, FileSpreadsheet, Search, Check } from 'lucide-react';
+import { Download, FileSpreadsheet, Search, Hash, Check } from 'lucide-react';
 import type { ServicoAtivo } from './types';
 
 interface ServicoItem {
@@ -34,6 +34,13 @@ const SERVICOS: ServicoItem[] = [
     descricao: 'Pesquise na Consulta Processual e baixe ou gere planilha.',
     accent: 'navy',
   },
+  {
+    id: 'digito',
+    icone: <Hash size={22} />,
+    titulo: 'Planilha por Dígito',
+    descricao: 'Distribua o acervo entre servidores pelo dígito do processo, com prioridades.',
+    accent: 'emerald',
+  },
 ];
 
 interface ServiceSelectorProps {
@@ -49,7 +56,7 @@ export function ServiceSelector({ servicoSelecionado, onSelecionar }: ServiceSel
         <span className="eyebrow">Selecione o serviço</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {SERVICOS.map((s) => {
           const on = servicoSelecionado === s.id;
           const isEmerald = s.accent === 'emerald';

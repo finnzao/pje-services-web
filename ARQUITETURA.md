@@ -1,8 +1,8 @@
 # Arquitetura do Fórum Hub
 
 > Referência técnica da aplicação de automação do PJE/TJBA: download de autos processuais em lote,
-> geração de planilhas de advogados e pesquisa geral de processos.
-> Atualizado em **26/08/2026**, após a limpeza de código legado descrita na [§12](#12--higiene-de-código-limpeza-de-082026).
+> geração de planilhas de advogados, pesquisa geral de processos e planilha administrativa por dígito.
+> Atualizado em **04/09/2026**; limpeza de código legado descrita na [§13](#13--higiene-de-código-limpeza-de-082026).
 
 **Stack:** Fastify 5 · Node 20 · Next.js 16 · React 19 · TypeScript strict · pnpm workspace · SSE + File System Access API
 
@@ -17,18 +17,19 @@
 5. [Download de processos (fluxo SSE)](#5--download-de-processos-fluxo-sse)
 6. [Armazenamento no cliente](#6--armazenamento-no-cliente)
 7. [Planilha de advogados](#7--planilha-de-advogados)
-8. [Pesquisa geral](#8--pesquisa-geral)
-9. [Contratos de API](#9--contratos-de-api)
-10. [Constantes e limites](#10--constantes-e-limites-operacionais)
-11. [Segurança e pontos de atenção](#11--segurança-e-pontos-de-atenção)
-12. [Higiene de código (limpeza de 08/2026)](#12--higiene-de-código-limpeza-de-082026)
-13. [Build, execução e deploy](#13--build-execução-e-deploy)
+8. [Planilha administrativa por dígito](#8--planilha-administrativa-por-dígito)
+9. [Pesquisa geral](#9--pesquisa-geral)
+10. [Contratos de API](#10--contratos-de-api)
+11. [Constantes e limites](#11--constantes-e-limites-operacionais)
+12. [Segurança e pontos de atenção](#12--segurança-e-pontos-de-atenção)
+13. [Higiene de código (limpeza de 08/2026)](#13--higiene-de-código-limpeza-de-082026)
+14. [Build, execução e deploy](#14--build-execução-e-deploy)
 
 ---
 
 ## 1 · Visão geral
 
-O Fórum Hub é uma aplicação interna que automatiza três serviços sobre o **PJE do Tribunal de
+O Fórum Hub é uma aplicação interna que automatiza quatro serviços sobre o **PJE do Tribunal de
 Justiça da Bahia (1º grau)**:
 
 - **Download de Processos** — baixa os autos digitais (PDF/ZIP) de todos os processos de uma ou
@@ -39,6 +40,9 @@ Justiça da Bahia (1º grau)**:
 - **Pesquisa Geral** — usa a Consulta Processual pública do PJE para gerar planilhas de resultados
   (com a coluna "Nó(s) atual(is)") ou baixar os processos encontrados, inclusive em *fila*
   (vários nomes de parte processados em sequência).
+- **Planilha Administrativa por Dígito** — distribui o acervo da unidade entre servidores pelo
+  último dígito do sequencial CNJ e entrega a carga de cada um ordenada por prioridade de
+  trabalho (metas do BI, tempo morto, antiguidade), em `.xlsx` único ou `.zip` por servidor.
 
 A decisão de arquitetura central: **o backend não armazena os arquivos do fluxo principal**. Ele
 atua como um proxy de autenticação e scraping que descobre URLs assinadas de download (S3 do PJE)
@@ -61,14 +65,14 @@ Monorepo `pnpm` com dois aplicativos independentes (instalação e deploy separa
 
 | App | Tecnologias | Papel |
 | --- | --- | --- |
-| `backend/` | Fastify 5, TypeScript (CommonJS, target ES2022), pino, ExcelJS, tsx (dev) | API REST + SSE; proxy de autenticação e scraping do PJE; geração da planilha de advogados no servidor |
+| `backend/` | Fastify 5, TypeScript (CommonJS, target ES2022), pino, ExcelJS, JSZip, tsx (dev) | API REST + SSE; proxy de autenticação e scraping do PJE; geração das planilhas de advogados e por dígito no servidor |
 | `frontend/` | Next.js 16.1.6 (App Router), React 19.2.3, Tailwind CSS v4, lucide-react, JSZip (só como empacotador) | SPA de página única (`/pje/pje-download`); orquestra downloads no navegador e gera XLSX de pesquisa no cliente |
 
 - **Node 20+**, `pnpm@10.28.2` fixado via `packageManager`/Corepack.
 - Raiz: `pnpm dev` sobe API e web juntos via `concurrently`.
 - Identidade visual: Fraunces (display), IBM Plex Sans (texto), IBM Plex Mono (dados), paleta
   *navy/brass* declarada em `@theme` no `globals.css` (Tailwind v4, sem `tailwind.config`).
-- Backend: `tsc` → `dist/`; Vitest configurado (`src/__tests__`), sem suíte no momento.
+- Backend: `tsc` → `dist/`; Vitest em `src/__tests__` (funções puras da planilha por dígito).
 - Frontend: `next.config.ts` define apenas *rewrites* de `/api/*` → `NEXT_PUBLIC_API_URL`
   (necessário porque `EventSource` não envia headers customizados).
 
@@ -156,7 +160,7 @@ Quatro estratégias (`UrlExtractor.listProcesses`) resolvem a lista de
 | `by_task` | `POST painelUsuario/recuperarProcessosTarefaPendenteComCriterios/{tarefa}/{fav}` | 500/pág (offset absoluto) · teto 10 000 |
 | `by_tag` | `GET painelUsuario/etiquetas/{id}/processos` (+ `/total`) | 500/pág |
 | `by_number` | Cascata: tarefas do painel → Consulta Pública → 4 endpoints REST de fallback | — |
-| `by_search` | Consulta Pública JSF (`listView.seam`) — ver §8 | 20/pág · teto 1 000 |
+| `by_search` | Consulta Pública JSF (`listView.seam`) — ver §9 | 20/pág · teto 1 000 |
 
 **Seleção múltipla:** o parâmetro `taskNames` (JSON `[{name, isFavorite}]`) e o `tagIds` (CSV)
 permitem enfileirar várias tarefas/etiquetas numa única execução; cada fonte é listada em série e
@@ -255,9 +259,54 @@ modo fsapi.
 5. **Download:** `GET /:jobId/download` serve o `.xlsx` — atenção: devolve o arquivo *mais
    recente* do diretório, não o do jobId (race com jobs concorrentes).
 
-## 8 · Pesquisa geral
+## 8 · Planilha administrativa por dígito
 
-### 8.1 · Consulta pública JSF
+Segundo serviço que roda inteiro no servidor, no mesmo contrato de job da planilha de advogados:
+`POST /api/pje/planilha-digito/gerar` responde **202 {jobId}**, o frontend faz polling de
+`/progress` a cada 2,5 s e baixa o arquivo em `/:jobId/download`. Distribui o acervo da unidade
+entre servidores pelo **dígito de distribuição** — o último algarismo do sequencial `NNNNNNN` do
+número CNJ (conceito que o próprio painel chama de `digitoFinalNumeroProcesso`), não o dígito
+verificador `DD`.
+
+**Entradas** (`GerarPlanilhaDigitoDTO`): atribuições dígito → servidor (um servidor pode acumular
+vários dígitos; dígitos sem servidor caem em "Não atribuídos"), tarefas ignoradas
+(multi-seleção) e formato (`.xlsx` único com uma aba por servidor, ou `.zip` com um arquivo por
+servidor via `jszip`, readmitido no backend com esse consumidor). Pesos de priorização podem ser
+sobrescritos pontualmente no DTO (`pesos`).
+
+1. **Sessão e acervo:** `resolveSessionFromDto` (extraído de advogados, §7) resolve a sessão; o
+   acervo é a união de **todas as tarefas do painel** (`painelUsuario/tarefas`) menos as
+   ignoradas, listadas pela paginação compartilhada (`painel-listing.ts`, 500/pág) com **dedup
+   pelos dígitos do número CNJ** — processo em mais de uma tarefa entra uma vez, com as demais
+   tarefas anotadas na planilha. Da listagem saem tarefa atual, etiquetas (`tagsProcessoList`) e
+   assunto.
+2. **Dias parados (30→90%):** `GET processos/{id}/ultimoMovimento` por processo, com 4 workers e
+   stagger de 250 ms (mesmo pool da extração de advogados). "Dias parados" = dias desde a
+   **última movimentação** (não desde a chegada na tarefa); sem movimento disponível, cai para
+   `dataChegada` com a flag `SEM_ULTIMO_MOVIMENTO`. Número malformado não derruba o lote: vira
+   `NUMERO_MALFORMADO` em "Não atribuídos".
+3. **Priorização por pesos** (`digito-core.ts`, calibrada pelo guia do Motor BI): etiqueta de
+   meta mais pesada (saúde 40 > júri 35 > saneamento 30 > demais 20; prefixos `gab_meta`/
+   `acv_meta`), tempo morto na régua CNJ de 100 dias (+25, escalando +5 a cada 30 dias, teto
+   +25) e antiguidade Meta 2 (+2/ano, teto +20). Faixas de exibição: **P1** meta em tempo morto,
+   **P2** meta, **P3** tempo morto, **P4** normal; ordem final por pontuação desc com desempate
+   por dias parados.
+4. **Auditoria de etiquetas:** processo atribuído sem etiqueta contendo o nome do seu servidor
+   recebe `SEM_ETIQUETA_SERVIDOR`; etiqueta apontando para outro servidor da atribuição vira
+   `ETIQUETA_DIVERGENTE` (o cálculo pelo dígito prevalece). O resumo do job alimenta o aviso de
+   etiquetagem no frontend — a etiquetagem em lote pelo próprio Fórum Hub é evolução prevista.
+5. **Saída e download:** abas com cabeçalho congelado (linha 4), autofiltro, destaque de dias
+   (laranja ≥ 100, vermelho ≥ 120) e estilos compartilhados (`xlsx-common.ts`). O arquivo é
+   nomeado com o jobId e `GET /:jobId/download` resolve **pelo jobId** — não repete o padrão
+   "arquivo mais recente" de advogados. O `progressMap` tem TTL: jobs terminais expiram em 1 h,
+   varridos a cada 30 min como o GC de arquivos.
+
+Funções puras (dígito, atribuição, exclusão de tarefas, pontuação, ordenação, distribuição)
+cobertas por Vitest em `src/__tests__/digito-core.test.ts`.
+
+## 9 · Pesquisa geral
+
+### 9.1 · Consulta pública JSF
 
 `consulta-publica.ts` automatiza o `listView.seam`: baixa o formulário (`/search-form-options`
 popula os selects de UF/OAB, jurisdição e órgão julgador), monta ~38 campos JSF fixos (ramo da
@@ -265,7 +314,7 @@ Justiça `8`, campos de captcha vazios), dispara a busca (`fPP:j_id459`) e pagin
 1 000 resultados, deduplicando por `idProcesso`. Validação: `nomeParte`/`nomeAdvogado` exigem
 ≥ 2 palavras e ao menos um critério preenchido.
 
-### 8.2 · Planilha de resultados
+### 9.2 · Planilha de resultados
 
 `GET /search-sheet-stream` emite um evento `row` por processo — para cada linha o backend faz um
 POST extra (`mostrarNosAtuais`) e devolve o **"Nó(s) atual(is)"** do fluxo. No cliente,
@@ -273,7 +322,7 @@ POST extra (`mostrarNosAtuais`) e devolve o **"Nó(s) atual(is)"** do fluxo. No 
 styles, sheet com `inlineStr`, cabeçalho congelado e autofiltro — empacotado com JSZip/DEFLATE).
 8 colunas, download automático ao final.
 
-### 8.3 · Modo fila (pesquisa múltipla)
+### 9.3 · Modo fila (pesquisa múltipla)
 
 Com `modoFila` ativo, o usuário cola uma lista de nomes de parte (um por linha, mínimo de
 2 palavras cada); os demais critérios preenchidos viram *filtros fixos* aplicados a todos. A
@@ -283,7 +332,7 @@ item tem status `pendente → executando → concluido|erro|cancelado`; ao final
 consolidado (`_RELATORIO_PESQUISA_MULTIPLA_{ts}.txt`) é salvo na *raiz* da pasta escolhida,
 separando partes com e sem processos e os itens não executados por cancelamento.
 
-## 9 · Contratos de API
+## 10 · Contratos de API
 
 ### Autenticação — `/api/pje/downloads/auth`
 
@@ -327,7 +376,16 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | `DELETE /:jobId` | Cancela |
 | `GET /:jobId/download` | `.xlsx` com `Content-Disposition` |
 
-## 10 · Constantes e limites operacionais
+### Planilha por dígito — `/api/pje/planilha-digito` (exige `x-user`)
+
+| Rota | Descrição |
+| --- | --- |
+| `POST /gerar` | `{credentials?\|pjeSessionId, pjeProfileIndex, atribuicoes[{digito, servidor}], tarefasIgnoradas[], formato: 'xlsx'\|'zip', pesos?}` → 202 `{jobId}` |
+| `GET /:jobId/progress` | `{status, progress, totalProcesses, processedCount, message, fileName?, resumo?}` — `resumo` traz distribuição, não atribuídos e pendências de etiqueta |
+| `DELETE /:jobId` | Cancela |
+| `GET /:jobId/download` | `.xlsx` ou `.zip`, resolvido **pelo jobId** (nome do arquivo carrega o jobId) |
+
+## 11 · Constantes e limites operacionais
 
 | Parâmetro | Valor | Onde |
 | --- | --- | --- |
@@ -339,6 +397,9 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Página de listagem (tarefas/etiquetas) | 500 · teto 10 000 (by_task) | strategies |
 | Pesquisa geral | 20/página · máx. 1 000 resultados | consulta-publica |
 | Extração de advogados | 4 workers · stagger 250 ms | pje-advogados.service |
+| Último movimento (planilha por dígito) | 4 workers · stagger 250 ms | planilha-digito.service |
+| Pesos e limiares de prioridade | régua CNJ 100 dias · alerta 100 · crítico 120 · pesos de meta 40/35/30/20 | digito-core (`PESOS_PRIORIDADE_PADRAO`) |
+| TTL do progressMap (planilha por dígito) | jobs terminais > 1 h, varridos a cada 30 min | planilha-digito.service |
 | TTL sessão / sessão por CPF | 30 min (deslizante) / 4 h | session-store |
 | Rate limit global da API | 100 req/min | server.ts |
 | Limite do ZIP em memória | 1 GiB (acima: streaming/ZIP64) | filesystem-manager |
@@ -346,7 +407,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Polling do job de advogados (UI) | 2,5 s | page.tsx |
 | Heartbeat SSE / retry | 15 s / 60 s | stream.controller |
 
-## 11 · Segurança e pontos de atenção
+## 12 · Segurança e pontos de atenção
 
 - **Identidade de aplicação simbólica:** o header `x-user` é um JSON fixo no cliente; qualquer
   chamador pode assumir o papel `magistrado`. Em produção só o CORS restringe a origem.
@@ -365,7 +426,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 - **Erros silenciosos:** `ParallelPool` engole exceções das tarefas; vários `catch {}` em pontos
   de rede (decisão consciente de resiliência, mas dificulta diagnóstico).
 
-## 12 · Higiene de código (limpeza de 08/2026)
+## 13 · Higiene de código (limpeza de 08/2026)
 
 Até agosto/2026 conviviam duas gerações no repositório: o fluxo SSE atual e um modelo anterior de
 **jobs assíncronos com download no servidor**, além de módulos órfãos acumulados por
@@ -381,7 +442,8 @@ refatorações. Essa dívida foi **removida** nesta limpeza:
   (usado só pelos removidos).
 - Os 3 shims redundantes de `pje-auth-proxy.service.ts` — `auth.controller` agora importa direto
   de `services/pje-auth`.
-- Dependências nunca registradas: `@fastify/jwt`, `@fastify/cookie` e `jszip` (backend).
+- Dependências nunca registradas: `@fastify/jwt`, `@fastify/cookie` e `jszip` (backend; o
+  `jszip` foi readmitido em 09/2026 com consumidor real — o ZIP da planilha por dígito, §8).
 - Tipos legados de `shared/types.ts` (`PJEJobStatus`, `CreateDownloadJobDTO`,
   `DownloadJobResponse`, `PJEDownloadProgress` etc.).
 
@@ -408,9 +470,9 @@ refatorações. Essa dívida foi **removida** nesta limpeza:
 
 **Ainda em aberto (não bloqueante):** `formatFileSize` em `types.ts` coexiste com `formatBytes`
 (formatações ligeiramente diferentes); o endpoint `GET /document-types` segue no ar sem consumidor;
-e as pequenas divergências da §11.
+e as pequenas divergências da §12.
 
-## 13 · Build, execução e deploy
+## 14 · Build, execução e deploy
 
 ### Desenvolvimento
 

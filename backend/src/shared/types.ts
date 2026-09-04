@@ -35,6 +35,86 @@ export interface PlanilhaAdvogadosResult {
   errors: Array<{ processo: string; message: string }>;
 }
 
+// ───────────────────────── Planilha administrativa por dígito ─────────────────────────
+
+export interface AtribuicaoDigito { digito: number; servidor: string; }
+
+export interface PesosPrioridade {
+  /** Prefixos (sem acento, case-insensitive) de etiqueta que marcam meta — ex.: gab_meta, acv_meta. */
+  padroesMeta: string[];
+  pesoMetaSaude: number;
+  pesoMetaJuri: number;
+  pesoMetaSaneamento: number;
+  pesoMetaOutras: number;
+  /** Régua do CNJ para tempo morto (dias sem movimentação). */
+  limiarTempoMortoDias: number;
+  pesoTempoMorto: number;
+  /** Escalada após cruzar a régua: peso extra a cada 30 dias adicionais parado. */
+  pesoPor30DiasAdicionais: number;
+  tetoEscaladaTempoMorto: number;
+  /** Antiguidade (Meta 2): peso por ano desde o ano CNJ do processo. */
+  pesoPorAnoAntiguidade: number;
+  tetoAntiguidade: number;
+  /** Faixas de destaque visual na planilha (dias parados). */
+  limiarAlertaDias: number;
+  limiarCriticoDias: number;
+}
+
+export interface GerarPlanilhaDigitoDTO {
+  credentials?: { cpf: string; password: string };
+  pjeSessionId?: string;
+  pjeProfileIndex?: number;
+  /** Dígito → servidor; dígitos ausentes ficam sem atribuição ("Não atribuídos"). */
+  atribuicoes: AtribuicaoDigito[];
+  /** Tarefas do painel excluídas da análise. */
+  tarefasIgnoradas?: string[];
+  formato: 'xlsx' | 'zip';
+  /** Sobrescreve pontualmente os pesos default de priorização. */
+  pesos?: Partial<PesosPrioridade>;
+}
+
+export interface ProcessoDigito {
+  idProcesso: number;
+  numeroProcesso: string;
+  /** Último algarismo do sequencial NNNNNNN; null = número malformado. */
+  digito: number | null;
+  anoCnj: number | null;
+  tarefaAtual: string;
+  outrasTarefas: string[];
+  etiquetas: string[];
+  assuntoPrincipal?: string;
+  classeJudicial?: string;
+  dataUltimoMovimento?: string;
+  diasParados: number | null;
+  metas: string[];
+  prioridade: 'P1' | 'P2' | 'P3' | 'P4';
+  pontuacao: number;
+  flags: string[];
+  servidor?: string;
+}
+
+export interface PlanilhaDigitoResumo {
+  porServidor: Array<{ servidor: string; digitos: number[]; total: number }>;
+  naoAtribuidos: { total: number; digitosSemServidor: number[] };
+  semEtiquetaServidor: number;
+  etiquetaDivergente: number;
+  malformados: number;
+}
+
+export interface PlanilhaDigitoProgress {
+  jobId: string;
+  status: 'listing' | 'enriching' | 'generating' | 'completed' | 'failed' | 'cancelling' | 'cancelled';
+  progress: number;
+  totalProcesses: number;
+  processedCount: number;
+  currentProcess?: string;
+  message: string;
+  timestamp: number;
+  /** Preenchidos quando status === 'completed'. */
+  fileName?: string;
+  resumo?: PlanilhaDigitoResumo;
+}
+
 export interface PesquisaProcessoCriteria {
   nomeParte?: string;
   outrosNomes?: string;

@@ -2,6 +2,9 @@ import type { ProcessoAdvogados, FiltroAdvogado, AdvogadoInfo } from '../../../.
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import ExcelJS from 'exceljs';
+import {
+  XLSX_TITLE_FONT, aplicarEstiloCabecalho, aplicarEstiloDado,
+} from '../xlsx-common';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'downloads', 'planilhas');
 const MAX_SHEET_NAME_LEN = 31;
@@ -71,7 +74,7 @@ function popularSheet(
   if (filtroLabel) {
     const titulo = ws.getCell(1, 1);
     titulo.value = `Filtro aplicado — ${filtroLabel} — ${processos.length} processo(s)`;
-    titulo.font = { name: 'Arial', bold: true, size: 11, color: { argb: 'FF2F5496' } };
+    titulo.font = XLSX_TITLE_FONT;
     ws.mergeCells(1, 1, 1, 11);
     primeiraLinhaDados = 2;
   }
@@ -100,13 +103,7 @@ function popularSheet(
   headers.forEach((h, i) => {
     const cell = headerRow.getCell(i + 1);
     cell.value = h;
-    cell.font = { name: 'Arial', bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5496' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    cell.border = {
-      top: { style: 'thin' }, bottom: { style: 'thin' },
-      left: { style: 'thin' }, right: { style: 'thin' },
-    };
+    aplicarEstiloCabecalho(cell);
   });
 
   processos.forEach((p, idx) => {
@@ -124,14 +121,7 @@ function popularSheet(
       p.orgaoJulgador || '',
       p.erro || 'OK',
     ];
-    row.eachCell((cell) => {
-      cell.font = { name: 'Arial', size: 10 };
-      cell.alignment = { vertical: 'top', wrapText: true };
-      cell.border = {
-        top: { style: 'thin' }, bottom: { style: 'thin' },
-        left: { style: 'thin' }, right: { style: 'thin' },
-      };
-    });
+    row.eachCell((cell) => { aplicarEstiloDado(cell); });
     const statusCell = row.getCell(11);
     statusCell.font = {
       name: 'Arial', size: 10,

@@ -3,11 +3,12 @@ import type {
   PlanilhaAdvogadosProgress, PlanilhaAdvogadosResult,
   GerarPlanilhaAdvogadosDTO,
 } from '../../../../shared/types';
-import { PJEAuthProxy, sessionStore } from '../pje-auth';
+import { resolveSessionFromDto } from '../pje-auth';
+import { listarProcessosDaTarefa } from '../download/painel-listing';
 import { extractAdvogadosFromHtml } from './html-advogados-parser';
 import { gerarXlsx } from './xlsx-generator';
 import {
-  PJE_BASE, pjeApiGet, pjeApiPost,
+  PJE_BASE, pjeApiGet,
   serializePjeCookies, type PjeSession,
 } from '../../../../shared/pje-api-client';
 
@@ -159,24 +160,7 @@ export class PjeAdvogadosService {
   }
 
   private async resolveSession(dto: GerarPlanilhaAdvogadosDTO): Promise<PjeSession> {
-    if (dto.pjeSessionId) {
-      const existing = sessionStore.get(dto.pjeSessionId);
-      if (existing) return existing as unknown as PjeSession;
-    }
-    if (!dto.credentials?.cpf || !dto.credentials?.password) {
-      throw new Error('Sessão PJE expirada. Faça login novamente.');
-    }
-    const proxy = new PJEAuthProxy();
-    const loginResult = await proxy.login(dto.credentials.cpf, dto.credentials.password);
-    if (loginResult.error || !loginResult.sessionId) {
-      throw new Error(loginResult.error || 'Falha na autenticacao');
-    }
-    if (dto.pjeProfileIndex !== undefined) {
-      await proxy.selectProfile(loginResult.sessionId, dto.pjeProfileIndex);
-    }
-    const stored = sessionStore.get(loginResult.sessionId);
-    if (!stored) throw new Error('Sessao nao encontrada apos login');
-    return stored as unknown as PjeSession;
+    return resolveSessionFromDto(dto);
   }
 
   private async listProcesses(
@@ -199,27 +183,16 @@ export class PjeAdvogadosService {
 
     for (const tarefa of tarefas) {
       if (this.isCancelled(jobId)) break;
-      const encoded = encodeURIComponent(tarefa.name.trim());
-      const endpoint = `painelUsuario/recuperarProcessosTarefaPendenteComCriterios/${encoded}/${tarefa.isFavorite === true}`;
-      let offset = 0;
-      while (true) {
-        if (this.isCancelled(jobId)) break;
-        const result = await pjeApiPost<any>(session, endpoint, {
-          numeroProcesso: '', classe: null, tags: [],
-          page: offset, maxResults: PAGE_SIZE, competencia: '',
-        });
-        const entities = result?.entities || (Array.isArray(result) ? result : []);
-        if (entities.length === 0) break;
-        for (const e of entities) {
+      await listarProcessosDaTarefa(
+        session, tarefa.name, tarefa.isFavorite === true,
+        (e: any) => {
           if (e.idProcesso && !seenIds.has(e.idProcesso)) {
             seenIds.add(e.idProcesso);
             processos.push(mapProcesso(e));
           }
-        }
-        if (entities.length < PAGE_SIZE) break;
-        offset += PAGE_SIZE;
-        await sleep(300);
-      }
+        },
+        () => this.isCancelled(jobId),
+      );
     }
 
     for (const tagId of etiquetas) {
