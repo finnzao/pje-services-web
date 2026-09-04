@@ -15,6 +15,8 @@ export interface GerarPlanilhaDigitoParams {
 export interface PlanilhaDigitoResumo {
   porServidor: Array<{ servidor: string; digitos: number[]; total: number }>;
   naoAtribuidos: { total: number; digitosSemServidor: number[] };
+  filasEspera: number;
+  metasAUmPasso: Array<{ meta: string; restantes: number; processos: string[] }>;
   semEtiquetaServidor: number;
   etiquetaDivergente: number;
   malformados: number;

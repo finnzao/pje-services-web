@@ -289,12 +289,21 @@ sobrescritos pontualmente no DTO (`pesos`).
    `dataChegada` com a flag `SEM_ULTIMO_MOVIMENTO`; número malformado não derruba o lote (vira
    `NUMERO_MALFORMADO` em "Não atribuídos"). O serviço loga os campos da primeira linha e
    amostras de payload sem data, para diagnosticar mudanças de contrato do PJE.
-3. **Priorização por pesos** (`digito-core.ts`, calibrada pelo guia do Motor BI): etiqueta de
-   meta mais pesada (saúde 40 > júri 35 > saneamento 30 > demais 20; prefixos `gab_meta`/
-   `acv_meta`), tempo morto na régua CNJ de 100 dias (+25, escalando +5 a cada 30 dias, teto
-   +25) e antiguidade Meta 2 (+2/ano, teto +20). Faixas de exibição: **P1** meta em tempo morto,
-   **P2** meta, **P3** tempo morto, **P4** normal; ordem final por pontuação desc com desempate
-   por dias parados.
+3. **Motor de peso** (`digito-core.ts`, implementa o `DOC_Peso_do_Processo_v1`):
+   `PESO = min(A+B+C+D+E, 100) × F`, de 0 a 100. **A** meta/etiqueta estratégica (máx. 40 —
+   "Meta a um passo de zerar" = 40, condição calculada com os restantes por meta no acervo;
+   saúde 36 > júri 32 > improbidade 30 > Meta 2/mais antigos 26 > ambiental 24 > saneamento 22 >
+   `GAB_` sem meta 12; +5 com 2+ metas); **B** assunto/classe TPU (grupos B1 saúde 20 → B6
+   execução fiscal 4); **C** tempo (faixas de dias parados 0/4/9/16/20 + antiguidade do ano CNJ
+   +5/+3/+1, teto 25); **D** rastro digital/validação BI (flags com pontos e providência-padrão:
+   `FILA_META_100D` 10, `ASSUNTO_REVISAR`/`ASSUNTO_AUSENTE` 8, `DIGITO_DIVERGENTE` 2,
+   `SEM_ETIQUETA_DIGITO` 1; teto 15); **E** proximidade da baixa pela tarefa (10/6/3/0);
+   **F** situação (trabalhável 1,0 · fila de espera 0,3 por padrões de tarefa · `GAB_nao
+   trabalhar` = `BLOQUEADO`). Faixas: CRÍTICO ≥ 70 · ALTO 50–69 · MÉDIO 30–49 · NORMAL < 30.
+   Prioridade P1 = Meta a um passo · P2 = Meta/GAB · P3 = tempo morto > 120 dias · P4 = normal;
+   ordem: prioridade → peso desc → dias desc → ano asc. As abas de servidor só levam os
+   trabalháveis; os em fila vão para a aba "Filas de espera" (acompanhar/cobrar terceiro). Os
+   exemplos calculados da §7 do documento são reproduzidos na suíte Vitest.
 4. **Auditoria de etiquetas:** processo atribuído sem etiqueta contendo o nome do seu servidor
    recebe `SEM_ETIQUETA_SERVIDOR`; etiqueta apontando para outro servidor da atribuição vira
    `ETIQUETA_DIVERGENTE` (o cálculo pelo dígito prevalece). O resumo do job alimenta o aviso de
@@ -402,7 +411,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Pesquisa geral | 20/página · máx. 1 000 resultados | consulta-publica |
 | Extração de advogados | 4 workers · stagger 250 ms | pje-advogados.service |
 | Último movimento (planilha por dígito) | 4 workers · stagger 250 ms | planilha-digito.service |
-| Pesos e limiares de prioridade | régua CNJ 100 dias · alerta 100 · crítico 120 · pesos de meta 40/35/30/20 | digito-core (`PESOS_PRIORIDADE_PADRAO`) |
+| Motor de peso (blocos A–F) | A≤40 · B≤20 · C≤25 · D≤15 · E≤10 · F 1,0/0,3 · réguas 100/120 dias · faixas 70/50/30 · meta a um passo ≤ 2 | digito-core (`CONFIG_PESO_PADRAO`) |
 | TTL do progressMap (planilha por dígito) | jobs terminais > 1 h, varridos a cada 30 min | planilha-digito.service |
 | TTL sessão / sessão por CPF | 30 min (deslizante) / 4 h | session-store |
 | Rate limit global da API | 100 req/min | server.ts |

@@ -1,37 +1,113 @@
 import type {
-  AtribuicaoDigito, PesosPrioridade, ProcessoDigito,
+  AtribuicaoDigito, BlocosPeso, ConfigPeso, FaixaPeso,
+  ProcessoDigito, SituacaoProcesso,
 } from '../../../../shared/types';
-
-/**
- * Pesos default da priorização, calibrados pelo guia "O Motor do BI e a
- * Matemática da Vara": metas de saúde têm rotina diária (bate-volta), Júri
- * pesa na Meta 2, saneamento protege a validade estatística das demais; a
- * régua de tempo morto do CNJ é 100 dias; processos antigos derrubam o TMT.
- */
-export const PESOS_PRIORIDADE_PADRAO: PesosPrioridade = {
-  padroesMeta: ['gab_meta', 'acv_meta'],
-  pesoMetaSaude: 40,
-  pesoMetaJuri: 35,
-  pesoMetaSaneamento: 30,
-  pesoMetaOutras: 20,
-  limiarTempoMortoDias: 100,
-  pesoTempoMorto: 25,
-  pesoPor30DiasAdicionais: 5,
-  tetoEscaladaTempoMorto: 25,
-  pesoPorAnoAntiguidade: 2,
-  tetoAntiguidade: 20,
-  limiarAlertaDias: 100,
-  limiarCriticoDias: 120,
-};
 
 export const FLAGS = {
   TEMPO_MORTO_CNJ: 'TEMPO_MORTO_CNJ',
+  TEMPO_MORTO_INTERNO: 'TEMPO_MORTO_INTERNO',
+  FILA_META_100D: 'FILA_META_100D',
   ASSUNTO_AUSENTE: 'ASSUNTO_AUSENTE',
+  ASSUNTO_REVISAR: 'ASSUNTO_REVISAR',
+  DIGITO_DIVERGENTE: 'DIGITO_DIVERGENTE',
+  SEM_ETIQUETA_DIGITO: 'SEM_ETIQUETA_DIGITO',
   SEM_ULTIMO_MOVIMENTO: 'SEM_ULTIMO_MOVIMENTO',
-  SEM_ETIQUETA_SERVIDOR: 'SEM_ETIQUETA_SERVIDOR',
-  ETIQUETA_DIVERGENTE: 'ETIQUETA_DIVERGENTE',
   NUMERO_MALFORMADO: 'NUMERO_MALFORMADO',
+  BLOQUEADO: 'BLOQUEADO',
 } as const;
+
+/** Providência-padrão exibida na planilha para cada flag (DOC_Peso §3.4). */
+export const PROVIDENCIAS: Record<string, string> = {
+  [FLAGS.FILA_META_100D]: 'Certificar a razão da espera e cobrar o terceiro (ofício à instância superior, MP ou Correios)',
+  [FLAGS.ASSUNTO_REVISAR]: 'Retificar o assunto para o ramo correto da TPU antes de qualquer outro ato',
+  [FLAGS.ASSUNTO_AUSENTE]: 'Cadastrar o assunto principal (TPU)',
+  [FLAGS.DIGITO_DIVERGENTE]: 'Reetiquetar — a etiqueta aponta para outro servidor/dígito (o cálculo prevalece)',
+  [FLAGS.SEM_ETIQUETA_DIGITO]: 'Etiquetar com o servidor do dígito',
+  [FLAGS.BLOQUEADO]: 'GAB_nao trabalhar: exige confirmação do gabinete para liberar',
+};
+
+/**
+ * Parâmetros default do motor de peso, transcritos do
+ * DOC_Peso_do_Processo_v1 (§3.1–3.6 e §10). Termos comparados sem
+ * acento/caixa, por substring.
+ */
+export const CONFIG_PESO_PADRAO: ConfigPeso = {
+  // A — Meta / etiqueta estratégica
+  limiarMetaAUmPasso: 2,
+  pontosMetaAUmPasso: 40,
+  pesosMeta: [
+    { nome: 'saude', pontos: 36, termos: ['saude'] },
+    { nome: 'juri', pontos: 32, termos: ['juri'] },
+    { nome: 'improbidade', pontos: 30, termos: ['improbidade'] },
+    { nome: 'mais antigos', pontos: 26, termos: ['antigo'] },
+    { nome: 'ambiental', pontos: 24, termos: ['ambient'] },
+    { nome: 'saneamento', pontos: 22, termos: ['saneamento'] },
+    { nome: 'meta 2', pontos: 26, termos: ['2'] },
+  ],
+  pesoMetaDesconhecida: 22,
+  pesoGabSemMeta: 12,
+  bonusMetasMultiplas: 5,
+  padroesMeta: ['gab_meta', 'acv_meta'],
+  padraoGab: 'gab_',
+  etiquetaBloqueio: 'gab_nao trabalhar',
+  // B — Assunto e classe
+  gruposAssunto: [
+    { nome: 'B1', pontos: 20, termos: ['saude', 'medicament', 'insumo', 'internacao', 'vaga de uti', 'leito', 'tratamento medico', 'hospitalar', 'plano de saude'] },
+    { nome: 'B2', pontos: 16, termos: ['civil publica', 'acpciv', 'improbidade', 'principios administrativos', 'dano ao erario', 'ambient', 'mandado de seguranca', 'msciv'] },
+    { nome: 'B3', pontos: 14, termos: ['alimentos', 'guarda', 'paternidade', 'interd', 'uniao estavel', 'parentesco', 'exealiij', 'dissolucao'] },
+    { nome: 'B4', pontos: 11, termos: ['inclusao indevida', 'cadastro de inadimplentes', 'consignado', 'desconto em folha', 'beneficio previdenciario', 'energia', 'agua', 'obrigacao de fazer'] },
+    { nome: 'B5', pontos: 6, termos: ['dano moral', 'dano material', 'imagem', 'contrat', 'alienacao fiduciaria', 'cedula de credito', 'cheque', 'duplicata', 'acidente de transito', 'usucapiao', 'inventario', 'partilha', 'rescisao'] },
+    { nome: 'B6', pontos: 4, termos: ['divida ativa', 'exfis', 'execucao fiscal', 'icms', 'pasep', 'cumsenfaz', 'piso', 'gratificac'] },
+  ],
+  pontosAssuntoAusenteRastro: 8,
+  temasAssuntoPorMeta: [
+    { metaContem: 'saude', grupoAssunto: 'B1' },
+    { metaContem: 'ambient', grupoAssunto: 'B2' },
+    { metaContem: 'improbidade', grupoAssunto: 'B2' },
+  ],
+  // C — Tempo
+  faixasDiasParados: [
+    { ate: 30, pontos: 0 },
+    { ate: 60, pontos: 4 },
+    { ate: 100, pontos: 9 },
+    { ate: 120, pontos: 16 },
+    { ate: 9_999_999, pontos: 20 },
+  ],
+  bonusAnoCnj: [
+    { ate: 2019, pontos: 5 },
+    { ate: 2022, pontos: 3 },
+    { ate: 2024, pontos: 1 },
+  ],
+  tetoTempo: 25,
+  // D — Rastro digital
+  pontosFlag: {
+    [FLAGS.FILA_META_100D]: 10,
+    [FLAGS.ASSUNTO_REVISAR]: 8,
+    [FLAGS.ASSUNTO_AUSENTE]: 8,
+    [FLAGS.DIGITO_DIVERGENTE]: 2,
+    [FLAGS.SEM_ETIQUETA_DIGITO]: 1,
+  },
+  tetoRastro: 15,
+  // E — Proximidade da baixa
+  tarefasProximasBaixa: [
+    { nome: 'baixa', pontos: 10, termos: ['certificar decurso', 'existencia de recursos', 'arquivo definitivo', 'certificar transito'] },
+    { nome: 'ato pronto', pontos: 6, termos: ['assinar ato em cartorio', 'assinar carta', 'imprimir expediente', 'determinacoes - urgentes'] },
+    { nome: 'analise', pontos: 3, termos: ['verificar providencia', 'cumprir determinacoes', 'triagem de processo', 'documentos nao lidos', 'pendencia em execucao fiscal'] },
+  ],
+  // F — Situação
+  padroesFilaEspera: [
+    '(susp)', 'suspens', 'instancia superior', 'artigo 40', 'art. 40', 'parcelamento',
+    'e-carta', 'aguardar decurso', 'aguardando apreciacao', 'aguardar resposta',
+    'aguardando retorno', 'ministerio publico', 'aguardar prazo',
+  ],
+  multiplicadorFilaEspera: 0.3,
+  // Réguas e faixas
+  limiarTempoMortoCnj: 100,
+  limiarTempoMortoInterno: 120,
+  limiarCritico: 70,
+  limiarAlto: 50,
+  limiarMedio: 30,
+};
 
 const MS_POR_DIA = 86_400_000;
 
@@ -41,6 +117,10 @@ export function normalizarTexto(texto: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+}
+
+function contemAlgum(alvo: string, termos: string[]): boolean {
+  return termos.some((t) => t && alvo.includes(normalizarTexto(t)));
 }
 
 /**
@@ -109,75 +189,228 @@ export function calcularDiasParados(dataUltimoMovimento: string | undefined, ago
   return Math.max(0, Math.floor((agora.getTime() - data.getTime()) / MS_POR_DIA));
 }
 
-/** Etiquetas do processo que casam com os padrões de meta (prefixo, sem acento/case). */
-export function detectarMetas(etiquetas: string[], pesos: PesosPrioridade): string[] {
-  const padroes = pesos.padroesMeta.map(normalizarTexto).filter(Boolean);
-  return (etiquetas || []).filter((tag) => {
+/**
+ * Nome canônico da meta a partir da etiqueta (GAB_Meta_saude e "ACV_Meta saude"
+ * são a mesma meta "saude"); null quando a etiqueta não é de meta.
+ */
+export function normalizarMeta(etiqueta: string, config: ConfigPeso): string | null {
+  const norm = normalizarTexto(etiqueta);
+  for (const prefixo of config.padroesMeta) {
+    const p = normalizarTexto(prefixo);
+    if (p && norm.startsWith(p)) {
+      const resto = norm.slice(p.length).replace(/^[\s_-]+/, '').trim();
+      return resto || null;
+    }
+  }
+  return null;
+}
+
+/** Metas canônicas do processo, sem duplicatas. */
+export function metasDoProcesso(etiquetas: string[], config: ConfigPeso): string[] {
+  const metas = new Set<string>();
+  for (const tag of etiquetas || []) {
+    const meta = normalizarMeta(tag, config);
+    if (meta) metas.add(meta);
+  }
+  return [...metas];
+}
+
+function temGabSemMeta(etiquetas: string[], config: ConfigPeso): boolean {
+  const bloqueio = normalizarTexto(config.etiquetaBloqueio);
+  const gab = normalizarTexto(config.padraoGab);
+  return (etiquetas || []).some((tag) => {
     const norm = normalizarTexto(tag);
-    return padroes.some((p) => norm.startsWith(p));
+    return norm.startsWith(gab) && norm !== bloqueio && normalizarMeta(tag, config) === null;
   });
 }
 
-function pesoDaMeta(meta: string, pesos: PesosPrioridade): number {
+export function ehBloqueado(etiquetas: string[], config: ConfigPeso): boolean {
+  const bloqueio = normalizarTexto(config.etiquetaBloqueio);
+  return (etiquetas || []).some((tag) => normalizarTexto(tag) === bloqueio);
+}
+
+function pontosDaMeta(meta: string, config: ConfigPeso): number {
   const norm = normalizarTexto(meta);
-  if (norm.includes('saude')) return pesos.pesoMetaSaude;
-  if (norm.includes('juri')) return pesos.pesoMetaJuri;
-  if (norm.includes('saneamento')) return pesos.pesoMetaSaneamento;
-  return pesos.pesoMetaOutras;
+  for (const grupo of config.pesosMeta) {
+    if (contemAlgum(norm, grupo.termos)) return grupo.pontos;
+  }
+  return config.pesoMetaDesconhecida;
 }
 
-/**
- * Pontuação de prioridade (maior = trabalhar antes):
- * meta mais pesada + tempo morto (com escalada) + antiguidade Meta 2.
- */
-export function calcularPontuacao(
-  proc: Pick<ProcessoDigito, 'metas' | 'diasParados' | 'anoCnj'>,
-  pesos: PesosPrioridade,
-  anoAtual: number,
-): number {
+/** Bloco A — usa a maior meta; +bônus com 2+ metas; 40 se alguma meta está a um passo. */
+export function calcularBlocoA(
+  metas: string[],
+  etiquetas: string[],
+  metasRestantes: Map<string, number>,
+  config: ConfigPeso,
+): { pontos: number; metaAUmPasso: boolean } {
+  const aUmPasso = metas.some((m) => (metasRestantes.get(m) ?? Infinity) <= config.limiarMetaAUmPasso);
+  if (aUmPasso) return { pontos: config.pontosMetaAUmPasso, metaAUmPasso: true };
+
   let pontos = 0;
+  if (metas.length > 0) pontos = Math.max(...metas.map((m) => pontosDaMeta(m, config)));
+  else if (temGabSemMeta(etiquetas, config)) pontos = config.pesoGabSemMeta;
+  if (metas.length >= 2) pontos = Math.min(pontos + config.bonusMetasMultiplas, config.pontosMetaAUmPasso);
+  return { pontos, metaAUmPasso: false };
+}
 
-  if (proc.metas.length > 0) {
-    pontos += Math.max(...proc.metas.map((m) => pesoDaMeta(m, pesos)));
+/** Bloco B — maior grupo aplicável ao assunto/classe. */
+export function calcularBlocoB(
+  assunto: string | undefined,
+  classe: string | undefined,
+  config: ConfigPeso,
+): { pontos: number; grupo: string | null } {
+  const alvo = normalizarTexto(`${assunto || ''} ${classe || ''}`);
+  if (!alvo) return { pontos: 0, grupo: null };
+  for (const grupo of config.gruposAssunto) {
+    if (contemAlgum(alvo, grupo.termos)) return { pontos: grupo.pontos, grupo: grupo.nome };
   }
+  return { pontos: 0, grupo: null };
+}
 
-  const dias = proc.diasParados ?? 0;
-  if (dias >= pesos.limiarTempoMortoDias) {
-    const extra = Math.floor((dias - pesos.limiarTempoMortoDias) / 30) * pesos.pesoPor30DiasAdicionais;
-    pontos += pesos.pesoTempoMorto + Math.min(extra, pesos.tetoEscaladaTempoMorto);
+/** Bloco C — faixa de dias parados + bônus de antiguidade, com teto. */
+export function calcularBlocoC(diasParados: number | null, anoCnj: number | null, config: ConfigPeso): number {
+  const dias = diasParados ?? 0;
+  let c1 = 0;
+  for (const faixa of config.faixasDiasParados) {
+    if (dias <= faixa.ate) { c1 = faixa.pontos; break; }
   }
-
-  if (proc.anoCnj !== null) {
-    const anos = Math.max(0, anoAtual - proc.anoCnj);
-    pontos += Math.min(anos * pesos.pesoPorAnoAntiguidade, pesos.tetoAntiguidade);
+  let c2 = 0;
+  if (anoCnj !== null) {
+    for (const faixa of config.bonusAnoCnj) {
+      if (anoCnj <= faixa.ate) { c2 = faixa.pontos; break; }
+    }
   }
+  return Math.min(c1 + c2, config.tetoTempo);
+}
 
-  return pontos;
+/** Bloco E — proximidade da baixa pela tarefa trabalhável mais avançada (filas não pontuam). */
+export function calcularBlocoE(tarefas: string[], situacao: SituacaoProcesso, config: ConfigPeso): number {
+  if (situacao !== 'TRABALHAVEL') return 0;
+  let melhor = 0;
+  for (const tarefa of tarefas) {
+    if (ehFilaDeEspera(tarefa, config)) continue;
+    const norm = normalizarTexto(tarefa);
+    for (const grupo of config.tarefasProximasBaixa) {
+      if (grupo.pontos > melhor && contemAlgum(norm, grupo.termos)) melhor = grupo.pontos;
+    }
+  }
+  return melhor;
+}
+
+export function ehFilaDeEspera(tarefa: string, config: ConfigPeso): boolean {
+  const norm = normalizarTexto(tarefa);
+  return config.padroesFilaEspera.some((p) => norm.includes(normalizarTexto(p)));
+}
+
+/** Trabalhável se ao menos uma tarefa está fora da lista de filas de espera. */
+export function classificarSituacao(tarefas: string[], config: ConfigPeso): SituacaoProcesso {
+  const temTrabalhavel = tarefas.some((t) => t.trim() && !ehFilaDeEspera(t, config));
+  return temTrabalhavel ? 'TRABALHAVEL' : 'FILA_ESPERA';
+}
+
+export interface AvaliacaoPeso {
+  peso: number;
+  faixa: FaixaPeso;
+  prioridade: 'P1' | 'P2' | 'P3' | 'P4';
+  situacao: SituacaoProcesso;
+  bloqueado: boolean;
+  metaAUmPasso: boolean;
+  blocos: BlocosPeso;
+  flags: string[];
+  providencias: string[];
+}
+
+export interface DadosAvaliacao {
+  metas: string[];
+  etiquetas: string[];
+  assuntoPrincipal?: string;
+  classeJudicial?: string;
+  diasParados: number | null;
+  anoCnj: number | null;
+  tarefas: string[];
+  /** Flags pré-existentes (etiquetagem, dados ausentes) que entram no bloco D quando pontuadas. */
+  flagsBase?: string[];
 }
 
 /**
- * Faixa de exibição: P1 = meta já lida pelo BI como tempo morto (pior cenário
- * do guia), P2 = etiqueta de meta, P3 = tempo morto sem meta, P4 = normal.
+ * Motor de peso completo (DOC_Peso_do_Processo_v1 §3–§5):
+ * PESO = min(A+B+C+D+E, 100) × F. P1 ⇔ A=40 · P2 ⇔ A≥12 · P3 ⇔ A=0 e
+ * dias > régua interna · P4 restante.
  */
-export function classificarPrioridade(
-  proc: Pick<ProcessoDigito, 'metas' | 'diasParados'>,
-  pesos: PesosPrioridade,
-): 'P1' | 'P2' | 'P3' | 'P4' {
-  const temMeta = proc.metas.length > 0;
-  const tempoMorto = (proc.diasParados ?? 0) >= pesos.limiarTempoMortoDias;
-  if (temMeta && tempoMorto) return 'P1';
-  if (temMeta) return 'P2';
-  if (tempoMorto) return 'P3';
-  return 'P4';
+export function avaliarProcesso(
+  dados: DadosAvaliacao,
+  metasRestantes: Map<string, number>,
+  config: ConfigPeso,
+): AvaliacaoPeso {
+  const flags = [...(dados.flagsBase ?? [])];
+  const situacao = classificarSituacao(dados.tarefas, config);
+  const bloqueado = ehBloqueado(dados.etiquetas, config);
+  const dias = dados.diasParados ?? 0;
+
+  const { pontos: A, metaAUmPasso } = calcularBlocoA(dados.metas, dados.etiquetas, metasRestantes, config);
+  const { pontos: B, grupo: grupoAssunto } = calcularBlocoB(dados.assuntoPrincipal, dados.classeJudicial, config);
+  const C = calcularBlocoC(dados.diasParados, dados.anoCnj, config);
+
+  if (dias > config.limiarTempoMortoCnj) flags.push(FLAGS.TEMPO_MORTO_CNJ);
+  if (dias > config.limiarTempoMortoInterno) flags.push(FLAGS.TEMPO_MORTO_INTERNO);
+  if (!dados.assuntoPrincipal?.trim()) flags.push(FLAGS.ASSUNTO_AUSENTE);
+  if (situacao === 'FILA_ESPERA' && dados.metas.length > 0 && dias > config.limiarTempoMortoCnj) {
+    flags.push(FLAGS.FILA_META_100D);
+  }
+  // Etiqueta temática cujo assunto não pertence ao grupo esperado (ex.: GAB_Meta_saude
+  // com assunto "Reajuste contratual") — o Datajud não vai ler o processo na meta.
+  if (dados.assuntoPrincipal?.trim()) {
+    for (const tema of config.temasAssuntoPorMeta) {
+      const temMetaTema = dados.metas.some((m) => normalizarTexto(m).includes(normalizarTexto(tema.metaContem)));
+      if (temMetaTema && grupoAssunto !== tema.grupoAssunto) {
+        flags.push(FLAGS.ASSUNTO_REVISAR);
+        break;
+      }
+    }
+  }
+  if (bloqueado) flags.push(FLAGS.BLOQUEADO);
+
+  const D = Math.min(
+    flags.reduce((acc, f) => acc + (config.pontosFlag[f] ?? 0), 0),
+    config.tetoRastro,
+  );
+  const E = calcularBlocoE(dados.tarefas, situacao, config);
+  const F = situacao === 'TRABALHAVEL' ? 1 : config.multiplicadorFilaEspera;
+
+  const bruto = Math.min(A + B + C + D + E, 100);
+  const peso = Math.round(bruto * F);
+
+  const faixa: FaixaPeso = peso >= config.limiarCritico ? 'CRITICO'
+    : peso >= config.limiarAlto ? 'ALTO'
+      : peso >= config.limiarMedio ? 'MEDIO' : 'NORMAL';
+
+  const prioridade: AvaliacaoPeso['prioridade'] = A >= config.pontosMetaAUmPasso ? 'P1'
+    : A >= config.pesoGabSemMeta ? 'P2'
+      : dias > config.limiarTempoMortoInterno ? 'P3' : 'P4';
+
+  const providencias = flags
+    .map((f) => PROVIDENCIAS[f])
+    .filter((p): p is string => Boolean(p));
+
+  return { peso, faixa, prioridade, situacao, bloqueado, metaAUmPasso, blocos: { A, B, C, D, E, F }, flags, providencias };
 }
 
-/** Ordena por pontuação desc; empate: mais dias parados, depois número (determinístico). */
+/**
+ * Ordem de trabalho (DOC_Peso §5 + critério de aceitação 2): a hierarquia de
+ * prioridade nunca é invertida pelo peso — P1 antes de tudo; dentro da mesma
+ * prioridade, peso desc → dias desc → ano asc → número asc.
+ */
 export function ordenarPorPrioridade(processos: ProcessoDigito[]): ProcessoDigito[] {
   return [...processos].sort((a, b) => {
+    if (a.prioridade !== b.prioridade) return a.prioridade.localeCompare(b.prioridade);
     if (b.pontuacao !== a.pontuacao) return b.pontuacao - a.pontuacao;
     const diasA = a.diasParados ?? -1;
     const diasB = b.diasParados ?? -1;
     if (diasB !== diasA) return diasB - diasA;
+    const anoA = a.anoCnj ?? 9999;
+    const anoB = b.anoCnj ?? 9999;
+    if (anoA !== anoB) return anoA - anoB;
     return a.numeroProcesso.localeCompare(b.numeroProcesso);
   });
 }
@@ -191,7 +424,7 @@ export interface ResultadoDistribuicao {
  * Distribui pelo dígito e audita as etiquetas de servidor: processo cuja
  * etiqueta contém o nome de OUTRO servidor da atribuição é divergência;
  * processo atribuído sem nenhuma etiqueta com o nome do seu servidor recebe
- * SEM_ETIQUETA_SERVIDOR (candidato à etiquetagem em lote).
+ * SEM_ETIQUETA_DIGITO (candidato à etiquetagem em lote).
  */
 export function distribuirPorServidor(
   processos: ProcessoDigito[],
@@ -216,8 +449,8 @@ export function distribuirPorServidor(
     }
 
     if (servidor) {
-      if (!etiquetadosPara.has(servidor)) proc.flags.push(FLAGS.SEM_ETIQUETA_SERVIDOR);
-      if ([...etiquetadosPara].some((s) => s !== servidor)) proc.flags.push(FLAGS.ETIQUETA_DIVERGENTE);
+      if (!etiquetadosPara.has(servidor)) proc.flags.push(FLAGS.SEM_ETIQUETA_DIGITO);
+      if ([...etiquetadosPara].some((s) => s !== servidor)) proc.flags.push(FLAGS.DIGITO_DIVERGENTE);
       proc.servidor = servidor;
       porServidor.get(servidor)!.push(proc);
     } else {

@@ -1,15 +1,15 @@
 import type {
-  GerarPlanilhaDigitoDTO, PesosPrioridade,
+  ConfigPeso, GerarPlanilhaDigitoDTO,
   PlanilhaDigitoProgress, PlanilhaDigitoResumo, ProcessoDigito,
 } from '../../../../shared/types';
 import { pjeApiGet, pjeApiPost, type PjeSession } from '../../../../shared/pje-api-client';
 import { resolveSessionFromDto } from '../pje-auth';
 import { listarProcessosDaTarefa } from '../download/painel-listing';
 import {
-  FLAGS, PESOS_PRIORIDADE_PADRAO,
-  calcularDiasParados, calcularPontuacao, classificarPrioridade,
-  distribuirPorServidor, detectarMetas, extrairDigito,
-  montarMapaAtribuicoes, ordenarPorPrioridade, parseDataPje, selecionarTarefas,
+  CONFIG_PESO_PADRAO, FLAGS,
+  avaliarProcesso, calcularDiasParados, distribuirPorServidor, extrairDigito,
+  metasDoProcesso, montarMapaAtribuicoes, ordenarPorPrioridade, parseDataPje,
+  selecionarTarefas,
 } from './digito-core';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
 
@@ -127,7 +127,7 @@ export class PlanilhaDigitoService {
     });
 
     try {
-      const pesos: PesosPrioridade = { ...PESOS_PRIORIDADE_PADRAO, ...(dto.pesos ?? {}) };
+      const pesos: ConfigPeso = { ...CONFIG_PESO_PADRAO, ...(dto.pesos ?? {}) };
       const mapa = montarMapaAtribuicoes(dto.atribuicoes);
 
       const session = await resolveSessionFromDto(dto);
@@ -186,7 +186,17 @@ export class PlanilhaDigitoService {
         processedCount: registros.length, message: 'Gerando planilha...',
       });
 
+      // A distribuição vem antes do peso: as flags de etiqueta (dígito) entram no bloco D.
       const distribuicao = distribuirPorServidor(processos, mapa);
+
+      // "Meta a um passo" = restantes por meta no acervo analisado (a base de
+      // conclusos do gabinete ainda não entra nesta contagem).
+      const metasRestantes = new Map<string, number>();
+      for (const proc of processos) {
+        for (const m of proc.metas) metasRestantes.set(m, (metasRestantes.get(m) ?? 0) + 1);
+      }
+      for (const proc of processos) this.aplicarAvaliacao(proc, metasRestantes, pesos);
+
       for (const [servidor, lista] of distribuicao.porServidor) {
         distribuicao.porServidor.set(servidor, ordenarPorPrioridade(lista));
       }
@@ -199,7 +209,7 @@ export class PlanilhaDigitoService {
 
       const { fileName } = await gerarSaidaDigito(distribuicao, digitosPorServidor, dto.formato, jobId, pesos);
 
-      const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa);
+      const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa, metasRestantes, pesos, processos);
       emit({
         status: 'completed', progress: 100, totalProcesses: registros.length,
         processedCount: registros.length, fileName, resumo,
@@ -286,7 +296,7 @@ export class PlanilhaDigitoService {
     registros: RegistroBruto[],
     jobId: string,
     agora: Date,
-    pesos: PesosPrioridade,
+    pesos: ConfigPeso,
     onProgress: (feitos: number, atual: string) => void,
   ): Promise<ProcessoDigito[]> {
     const resultados: ProcessoDigito[] = new Array<ProcessoDigito>(registros.length);
@@ -364,7 +374,7 @@ export class PlanilhaDigitoService {
     registro: RegistroBruto,
     dataMovimento: string | undefined,
     agora: Date,
-    pesos: PesosPrioridade,
+    pesos: ConfigPeso,
   ): ProcessoDigito {
     const { digito, ano } = extrairDigito(registro.numeroProcesso);
     const flags: string[] = [];
@@ -379,11 +389,8 @@ export class PlanilhaDigitoService {
     const diasParados = calcularDiasParados(dataBase, agora);
     if (dataBase === undefined && diasParados === null) flags.push(FLAGS.SEM_ULTIMO_MOVIMENTO);
 
-    const metas = detectarMetas(registro.etiquetas, pesos);
-    if ((diasParados ?? 0) >= pesos.limiarTempoMortoDias) flags.push(FLAGS.TEMPO_MORTO_CNJ);
-    if (!registro.assuntoPrincipal) flags.push(FLAGS.ASSUNTO_AUSENTE);
-
-    const base = { metas, diasParados, anoCnj: ano };
+    // O peso, as flags de BI e a situação são aplicados depois da distribuição
+    // (aplicarAvaliacao) — aqui só o registro base.
     return {
       idProcesso: registro.idProcesso,
       numeroProcesso: registro.numeroProcesso,
@@ -396,17 +403,49 @@ export class PlanilhaDigitoService {
       classeJudicial: registro.classeJudicial,
       dataUltimoMovimento: dataMovimento,
       diasParados,
-      metas,
-      prioridade: classificarPrioridade(base, pesos),
-      pontuacao: calcularPontuacao(base, pesos, agora.getFullYear()),
+      metas: metasDoProcesso(registro.etiquetas, pesos),
+      metaAUmPasso: false,
+      situacao: 'TRABALHAVEL',
+      bloqueado: false,
+      prioridade: 'P4',
+      pontuacao: 0,
+      faixa: 'NORMAL',
+      blocos: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 1 },
       flags,
+      providencias: [],
     };
+  }
+
+  private aplicarAvaliacao(proc: ProcessoDigito, metasRestantes: Map<string, number>, config: ConfigPeso): void {
+    const avaliacao = avaliarProcesso({
+      metas: proc.metas,
+      etiquetas: proc.etiquetas,
+      assuntoPrincipal: proc.assuntoPrincipal,
+      classeJudicial: proc.classeJudicial,
+      diasParados: proc.diasParados,
+      anoCnj: proc.anoCnj,
+      tarefas: [proc.tarefaAtual, ...proc.outrasTarefas],
+      flagsBase: proc.flags,
+    }, metasRestantes, config);
+
+    proc.pontuacao = avaliacao.peso;
+    proc.faixa = avaliacao.faixa;
+    proc.prioridade = avaliacao.prioridade;
+    proc.situacao = avaliacao.situacao;
+    proc.bloqueado = avaliacao.bloqueado;
+    proc.metaAUmPasso = avaliacao.metaAUmPasso;
+    proc.blocos = avaliacao.blocos;
+    proc.flags = avaliacao.flags;
+    proc.providencias = avaliacao.providencias;
   }
 
   private montarResumo(
     distribuicao: ReturnType<typeof distribuirPorServidor>,
     digitosPorServidor: Map<string, number[]>,
     mapa: Map<number, string>,
+    metasRestantes: Map<string, number>,
+    pesos: ConfigPeso,
+    processos: ProcessoDigito[],
   ): PlanilhaDigitoResumo {
     const digitosSemServidor = new Set<number>();
     let malformados = 0;
@@ -419,10 +458,21 @@ export class PlanilhaDigitoService {
     let etiquetaDivergente = 0;
     for (const lista of distribuicao.porServidor.values()) {
       for (const proc of lista) {
-        if (proc.flags.includes(FLAGS.SEM_ETIQUETA_SERVIDOR)) semEtiquetaServidor++;
-        if (proc.flags.includes(FLAGS.ETIQUETA_DIVERGENTE)) etiquetaDivergente++;
+        if (proc.flags.includes(FLAGS.SEM_ETIQUETA_DIGITO)) semEtiquetaServidor++;
+        if (proc.flags.includes(FLAGS.DIGITO_DIVERGENTE)) etiquetaDivergente++;
       }
     }
+
+    const metasAUmPasso = [...metasRestantes.entries()]
+      .filter(([, restantes]) => restantes <= pesos.limiarMetaAUmPasso)
+      .map(([meta, restantes]) => ({
+        meta,
+        restantes,
+        processos: processos
+          .filter((p) => p.metas.includes(meta))
+          .map((p) => p.numeroProcesso)
+          .slice(0, 10),
+      }));
 
     return {
       porServidor: [...distribuicao.porServidor.entries()].map(([servidor, lista]) => ({
@@ -434,6 +484,8 @@ export class PlanilhaDigitoService {
         total: distribuicao.naoAtribuidos.length,
         digitosSemServidor: [...digitosSemServidor].sort((a, b) => a - b),
       },
+      filasEspera: processos.filter((p) => p.situacao === 'FILA_ESPERA').length,
+      metasAUmPasso,
       semEtiquetaServidor,
       etiquetaDivergente,
       malformados,

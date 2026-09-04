@@ -39,25 +39,49 @@ export interface PlanilhaAdvogadosResult {
 
 export interface AtribuicaoDigito { digito: number; servidor: string; }
 
-export interface PesosPrioridade {
-  /** Prefixos (sem acento, case-insensitive) de etiqueta que marcam meta — ex.: gab_meta, acv_meta. */
+export interface FaixaPontos { ate: number; pontos: number; }
+export interface GrupoTermos { nome: string; pontos: number; termos: string[]; }
+
+/**
+ * Parâmetros do motor de peso (DOC_Peso_do_Processo_v1):
+ * PESO = min(A + B + C + D + E, 100) × F, de 0 a 100.
+ */
+export interface ConfigPeso {
+  // Bloco A — Meta / etiqueta estratégica (máx. 40)
+  limiarMetaAUmPasso: number;
+  pontosMetaAUmPasso: number;
+  /** Pontuação por meta canônica (match por substring, em ordem). */
+  pesosMeta: GrupoTermos[];
+  pesoMetaDesconhecida: number;
+  pesoGabSemMeta: number;
+  bonusMetasMultiplas: number;
+  /** Prefixos (sem acento/caixa) de etiqueta de meta — ex.: gab_meta, acv_meta. */
   padroesMeta: string[];
-  pesoMetaSaude: number;
-  pesoMetaJuri: number;
-  pesoMetaSaneamento: number;
-  pesoMetaOutras: number;
-  /** Régua do CNJ para tempo morto (dias sem movimentação). */
-  limiarTempoMortoDias: number;
-  pesoTempoMorto: number;
-  /** Escalada após cruzar a régua: peso extra a cada 30 dias adicionais parado. */
-  pesoPor30DiasAdicionais: number;
-  tetoEscaladaTempoMorto: number;
-  /** Antiguidade (Meta 2): peso por ano desde o ano CNJ do processo. */
-  pesoPorAnoAntiguidade: number;
-  tetoAntiguidade: number;
-  /** Faixas de destaque visual na planilha (dias parados). */
-  limiarAlertaDias: number;
-  limiarCriticoDias: number;
+  padraoGab: string;
+  etiquetaBloqueio: string;
+  // Bloco B — Assunto e classe (máx. 20; grupos em ordem decrescente de pontos)
+  gruposAssunto: GrupoTermos[];
+  pontosAssuntoAusenteRastro: number;
+  /** Meta temática → grupo de assunto esperado (gera ASSUNTO_REVISAR se divergir). */
+  temasAssuntoPorMeta: Array<{ metaContem: string; grupoAssunto: string }>;
+  // Bloco C — Tempo (máx. tetoTempo)
+  faixasDiasParados: FaixaPontos[];
+  bonusAnoCnj: FaixaPontos[];
+  tetoTempo: number;
+  // Bloco D — Rastro digital / validação BI
+  pontosFlag: Record<string, number>;
+  tetoRastro: number;
+  // Bloco E — Proximidade da baixa (grupos em ordem decrescente de pontos)
+  tarefasProximasBaixa: GrupoTermos[];
+  // Bloco F — Situação
+  padroesFilaEspera: string[];
+  multiplicadorFilaEspera: number;
+  // Réguas de tempo morto e faixas de peso
+  limiarTempoMortoCnj: number;
+  limiarTempoMortoInterno: number;
+  limiarCritico: number;
+  limiarAlto: number;
+  limiarMedio: number;
 }
 
 export interface GerarPlanilhaDigitoDTO {
@@ -69,9 +93,14 @@ export interface GerarPlanilhaDigitoDTO {
   /** Tarefas do painel excluídas da análise. */
   tarefasIgnoradas?: string[];
   formato: 'xlsx' | 'zip';
-  /** Sobrescreve pontualmente os pesos default de priorização. */
-  pesos?: Partial<PesosPrioridade>;
+  /** Sobrescreve pontualmente os parâmetros do motor de peso. */
+  pesos?: Partial<ConfigPeso>;
 }
+
+export type SituacaoProcesso = 'TRABALHAVEL' | 'FILA_ESPERA';
+export type FaixaPeso = 'CRITICO' | 'ALTO' | 'MEDIO' | 'NORMAL';
+
+export interface BlocosPeso { A: number; B: number; C: number; D: number; E: number; F: number; }
 
 export interface ProcessoDigito {
   idProcesso: number;
@@ -87,15 +116,24 @@ export interface ProcessoDigito {
   dataUltimoMovimento?: string;
   diasParados: number | null;
   metas: string[];
+  metaAUmPasso: boolean;
+  situacao: SituacaoProcesso;
+  bloqueado: boolean;
   prioridade: 'P1' | 'P2' | 'P3' | 'P4';
+  /** Peso final 0–100 = min(A+B+C+D+E, 100) × F. */
   pontuacao: number;
+  faixa: FaixaPeso;
+  blocos: BlocosPeso;
   flags: string[];
+  providencias: string[];
   servidor?: string;
 }
 
 export interface PlanilhaDigitoResumo {
   porServidor: Array<{ servidor: string; digitos: number[]; total: number }>;
   naoAtribuidos: { total: number; digitosSemServidor: number[] };
+  filasEspera: number;
+  metasAUmPasso: Array<{ meta: string; restantes: number; processos: string[] }>;
   semEtiquetaServidor: number;
   etiquetaDivergente: number;
   malformados: number;

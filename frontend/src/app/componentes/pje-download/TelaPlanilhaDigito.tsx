@@ -280,6 +280,11 @@ function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
               {s.servidor} (dígitos {s.digitos.join(', ')}): <strong>{s.total}</strong>
             </span>
           ))}
+          {resumo.filasEspera > 0 && (
+            <span className="chip bg-slate-100 text-slate-600">
+              Filas de espera: <strong>{resumo.filasEspera}</strong>
+            </span>
+          )}
           {resumo.naoAtribuidos.total > 0 && (
             <span className="chip bg-brass-50 text-brass-600">
               Não atribuídos: <strong>{resumo.naoAtribuidos.total}</strong>
@@ -287,6 +292,20 @@ function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
           )}
         </div>
       </div>
+
+      {resumo.metasAUmPasso.length > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700">Metas a um passo de zerar</p>
+          <div className="space-y-1 text-xs leading-relaxed text-slate-700">
+            {resumo.metasAUmPasso.map((m) => (
+              <p key={m.meta}>
+                A Meta <strong>{m.meta}</strong> será concluída com o saneamento de apenas{' '}
+                <strong>{m.restantes}</strong> processo(s): {m.processos.join(', ')}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {pendencias && (
         <div className="flex items-start gap-2.5 rounded-2xl border border-brass-200 bg-brass-50/60 p-4 text-sm text-slate-700">
@@ -297,10 +316,10 @@ function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
               <p>• Dígito(s) <strong>{resumo.naoAtribuidos.digitosSemServidor.join(', ')}</strong> sem servidor atribuído — os processos estão na aba/arquivo &quot;Não atribuídos&quot;.</p>
             )}
             {resumo.semEtiquetaServidor > 0 && (
-              <p>• <strong>{resumo.semEtiquetaServidor}</strong> processo(s) sem a etiqueta do servidor responsável no PJE (flag SEM_ETIQUETA_SERVIDOR na planilha).</p>
+              <p>• <strong>{resumo.semEtiquetaServidor}</strong> processo(s) sem a etiqueta do servidor responsável no PJE (flag SEM_ETIQUETA_DIGITO na planilha).</p>
             )}
             {resumo.etiquetaDivergente > 0 && (
-              <p>• <strong>{resumo.etiquetaDivergente}</strong> processo(s) com etiqueta apontando para outro servidor (flag ETIQUETA_DIVERGENTE) — o cálculo pelo dígito prevalece.</p>
+              <p>• <strong>{resumo.etiquetaDivergente}</strong> processo(s) com etiqueta apontando para outro servidor (flag DIGITO_DIVERGENTE) — o cálculo pelo dígito prevalece.</p>
             )}
             {resumo.malformados > 0 && (
               <p>• <strong>{resumo.malformados}</strong> processo(s) com número fora do padrão CNJ.</p>
