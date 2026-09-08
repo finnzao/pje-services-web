@@ -154,7 +154,7 @@ export class UrlExtractor {
         'navbar:dtFimInputDate': '',
         'navbar:dtFimInputCurrentDate': currentDate,
         'navbar:cbCronologia': 'DESC',
-        '': 'on', navbar: 'navbar', autoScroll: '',
+        navbar: 'navbar', autoScroll: '',
         'javax.faces.ViewState': viewStateMatch[1],
         [downloadBtnId]: downloadBtnId,
         'AJAX:EVENTS_COUNT': '1',

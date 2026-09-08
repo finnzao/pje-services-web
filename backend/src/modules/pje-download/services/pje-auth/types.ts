@@ -72,10 +72,3 @@ export interface FormFieldsResult {
   actionUrl: string | null;
   fields: Record<string, string>;
 }
-
-export interface ProfileMapping {
-  virtualIndex: number;
-  tbodyIndex: number;
-  nome: string;
-  isActive: boolean;
-}

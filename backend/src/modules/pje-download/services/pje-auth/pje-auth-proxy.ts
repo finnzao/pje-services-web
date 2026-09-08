@@ -8,6 +8,7 @@ import {
   extractProfilesFromHtml, extractVisibleIndices,
   hasPagination, extractScrollerInfo, extractTotalPages,
   extractCurrentPage, getPageForIndex,
+  extractProfileSelectId, extractProfileFormFields,
 } from './profile-extractor';
 import {
   extractFormFields, extractViewState,
@@ -441,31 +442,14 @@ export class PJEAuthProxy {
   }
 
   private async executeProfileSelection(html: string, viewState: string, profileIndex: number): Promise<void> {
-    let elementId: string;
-
-    if (profileIndex === -1) {
-      elementId = 'papeisUsuarioForm:dtPerfil:j_id66';
-    } else {
-      elementId = `papeisUsuarioForm:dtPerfil:${profileIndex}:j_id70`;
-    }
-
-    if (!html.includes(elementId)) {
-      console.warn(`[PJE-AUTH] element_id "${elementId}" não encontrado no HTML`);
-      const altId = `papeisUsuarioForm:dtPerfil:${profileIndex}:j_id68`;
-      if (html.includes(altId)) {
-        console.log(`[PJE-AUTH] Usando fallback j_id68: ${altId}`);
-        elementId = altId;
-      } else {
-        console.warn(`[PJE-AUTH] Nenhum element_id válido encontrado, tentando mesmo assim`);
-      }
-    }
+    const elementId = extractProfileSelectId(html, profileIndex);
+    if (!elementId) throw new Error(`Perfil ${profileIndex} não encontrado na página de seleção`);
 
     console.log(`[PJE-AUTH] Selecionando perfil: ${elementId}`);
 
     const body = new URLSearchParams({
       'papeisUsuarioForm': 'papeisUsuarioForm',
-      'papeisUsuarioForm:j_id60': '',
-      'papeisUsuarioForm:j_id72': 'papeisUsuarioForm:j_id72',
+      ...extractProfileFormFields(html),
       'javax.faces.ViewState': viewState,
       [elementId]: elementId,
     });

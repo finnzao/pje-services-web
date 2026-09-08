@@ -2,7 +2,8 @@
 
 > Referência técnica da aplicação de automação do PJE/TJBA: download de autos processuais em lote,
 > geração de planilhas de advogados, pesquisa geral de processos e planilha administrativa por dígito.
-> Atualizado em **04/09/2026**; limpeza de código legado descrita na [§13](#13--higiene-de-código-limpeza-de-082026).
+> Atualizado em **08/09/2026** (deploy do PJE de 09/2026, ver [§4.1](#41--login-no-pje-pjeauthproxy) e [§12](#12--segurança-e-pontos-de-atenção));
+> limpeza de código legado descrita na [§13](#13--higiene-de-código-limpeza-de-082026).
 
 **Stack:** Fastify 5 · Node 20 · Next.js 16 · React 19 · TypeScript strict · pnpm workspace · SSE + File System Access API
 
@@ -72,7 +73,8 @@ Monorepo `pnpm` com dois aplicativos independentes (instalação e deploy separa
 - Raiz: `pnpm dev` sobe API e web juntos via `concurrently`.
 - Identidade visual: Fraunces (display), IBM Plex Sans (texto), IBM Plex Mono (dados), paleta
   *navy/brass* declarada em `@theme` no `globals.css` (Tailwind v4, sem `tailwind.config`).
-- Backend: `tsc` → `dist/`; Vitest em `src/__tests__` (funções puras da planilha por dígito).
+- Backend: `tsc` → `dist/`; Vitest em `src/__tests__` (funções puras da planilha por dígito e
+  parser da página de perfis). No Node < 22.12 rode com `NODE_OPTIONS=--experimental-require-module`.
 - Frontend: `next.config.ts` define apenas *rewrites* de `/api/*` → `NEXT_PUBLIC_API_URL`
   (necessário porque `EventSource` não envia headers customizados).
 
@@ -120,7 +122,8 @@ produção).
    `idUsuarioLocalizacao`; a sessão é gravada no `sessionStore` e persistida por CPF.
 5. **Seleção de perfil** — scraping de `/pje/ng2/dev.seam` (tabela `papeisUsuarioForm:dtPerfil`,
    5 perfis por página com paginação AJAX RichFaces). O favorito do `<thead>` tem índice `-1`;
-   a seleção posta o id JSF do link (`j_id70`/`j_id68`/`j_id66`). Em seguida três POSTs em
+   a seleção posta o id JSF do link `jsfcljs(...)` e os inputs do form, ambos lidos do HTML
+   (os `j_idNN` mudam a cada deploy do PJE). Em seguida três POSTs em
    paralelo carregam `tarefas`, `tarefasFavoritas` e `etiquetas` (até 500).
 
 ### 4.2 · Camadas de sessão
@@ -193,9 +196,10 @@ select não for encontrado) e retorna `not_available` sem requisição quando au
 2. `GET painelUsuario/gerarChaveAcessoProcesso/{idProcesso}` → chave `ca`.
 3. `GET listAutosDigitais.seam?idProcesso&ca[&idTaskInstance]` → extrai
    `javax.faces.ViewState` e o id do botão Download (4 regex + heurística de contexto sobre
-   `navbar:j_idNN`).
+   `navbar:j_idNN`; no deploy de 09/2026 é `navbar:j_id290`, mas o id é sempre lido do HTML).
 4. **POST AJAX** no mesmo `.seam` (`AJAXREQUEST=_viewRoot`, `Faces-Request: partial/ajax`) com
-   `navbar:cbTipoDocumento = id | '0'`.
+   `navbar:cbTipoDocumento = id | '0'`, os campos de filtro do `navbar` (`idDe/idAte`, datas,
+   `cbCronologia=DESC`) e `AJAX:EVENTS_COUNT=1` — corpo idêntico ao que o navegador envia.
 5. **Classificação da resposta:** URL S3 (`window.open('…s3….pdf|zip')`) → `direct` (+ `HEAD`
    para `fileSize`); frases "nenhum documento/sem documentos…" → `not_available`; "será
    disponibilizado/Área de download/…" ou resposta > 5 000 chars → `queued`; senão `error`.
@@ -429,8 +433,14 @@ separando partes com e sem processos e os itens não executados por cancelamento
 - **Sem persistência real:** o progresso dos jobs de advogados some no restart e o `progressMap`
   não tem TTL (cresce até o restart); sessões sobrevivem apenas via `.pje-sessions.json`.
 - **Acoplamento ao TJBA/1º grau:** hosts, `pje-tjba-1g`, `ramoJustica='8'`,
-  `sistemaOrigem=PRIMEIRA_INSTANCIA` e ids JSF literais (`j_id66/68/70/72`, `j_id459`,
-  `j_id507/508`) — qualquer atualização visual do PJE pode quebrar parsers e seleção de perfil.
+  `sistemaOrigem=PRIMEIRA_INSTANCIA` e ids JSF literais da Consulta Pública (`j_id459`,
+  `j_id507/508`) — qualquer atualização visual do PJE pode quebrar parsers. O deploy de
+  **09/2026** renumerou os ids da página de perfis (`j_id66/68/70/72` → `j_id79/81/83/85`) e
+  derrubou a listagem; desde então perfis e download derivam os ids do próprio HTML. REST legado,
+  headers (`X-pje-*`), `gerarChaveAcessoProcesso` e o fluxo de download (resposta "será
+  disponibilizado… Área de download" → fila) não mudaram nesse deploy, e o parser de advogados
+  (`#poloAtivo/#poloPassivo`, âncoras `%28ADVOGADO%29`) foi validado contra o HTML novo dos
+  autos. A Consulta Pública e a Área de Download (`pjedocs-api`) não foram reverificadas.
 - **Catálogo fixo de tipos:** risco de falso `not_available` quando o ID difere no processo
   (§5.3).
 - **Divergências de configuração:** porta default do código é `10000`, mas
@@ -522,4 +532,4 @@ cd frontend && pnpm dev   # exige frontend/.env.local com NEXT_PUBLIC_API_URL=ht
 
 ---
 
-*Documento gerado a partir da leitura integral do código (branch `main`, 26/08/2026).*
+*Documento gerado a partir da leitura integral do código (branch `main`, 26/08/2026); revisado em 08/09/2026.*
