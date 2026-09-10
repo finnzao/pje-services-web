@@ -15,10 +15,10 @@ export class ByTaskStrategy implements DownloadStrategy {
     params: Record<string, unknown>,
     onCancelled: () => boolean,
   ): Promise<ProcessoInfo[]> {
-    const taskName = ((params.taskName as string) || '').trim();
+    const taskName = (params.taskName as string) || '';
     const isFavorite = params.isFavorite === true;
 
-    if (!taskName) return [];
+    if (!taskName.trim()) return [];
 
     const encodedName = encodeURIComponent(taskName);
     const endpoint = `painelUsuario/recuperarProcessosTarefaPendenteComCriterios/${encodedName}/${isFavorite}`;

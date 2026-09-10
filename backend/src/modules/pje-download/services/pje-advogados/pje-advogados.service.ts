@@ -5,7 +5,8 @@ import type {
 } from '../../../../shared/types';
 import { resolveSessionFromDto } from '../pje-auth';
 import { listarProcessosDaTarefa } from '../download/painel-listing';
-import { extractAdvogadosFromHtml } from './html-advogados-parser';
+import { extractPolosFromHtml } from './html-advogados-parser';
+import { parseDataPje } from '../planilha-digito/digito-core';
 import { gerarXlsx } from './xlsx-generator';
 import {
   PJE_BASE, pjeApiGet,
@@ -73,7 +74,7 @@ export class PjeAdvogadosService {
       emit({
         jobId, status: 'extracting', progress: 10,
         totalProcesses: processos.length, processedCount: 0,
-        message: `Extraindo advogados de ${processos.length} processos...`,
+        message: `Capturando partes e advogados de ${processos.length} processos...`,
         timestamp: Date.now(),
       });
 
@@ -86,7 +87,7 @@ export class PjeAdvogadosService {
             jobId, status: 'extracting', progress: pct,
             totalProcesses: processos.length, processedCount: processed,
             currentProcess: current,
-            message: `Extraindo ${processed}/${processos.length}: ${current}`,
+            message: `Capturando ${processed}/${processos.length}: ${current}`,
             timestamp: Date.now(),
           });
         },
@@ -249,7 +250,7 @@ export class PjeAdvogadosService {
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Erro desconhecido';
           errors.push({ processo: proc.numeroProcesso, message: msg });
-          resultados[idx] = { ...proc, advogadosPoloAtivo: [], advogadosPoloPassivo: [], erro: msg };
+          resultados[idx] = { ...proc, erro: msg };
         }
         processed++;
         onProgress(processed, proc.numeroProcesso);
@@ -264,11 +265,7 @@ export class PjeAdvogadosService {
 
     for (let i = 0; i < processos.length; i++) {
       if (!resultados[i]) {
-        resultados[i] = {
-          ...processos[i],
-          advogadosPoloAtivo: [], advogadosPoloPassivo: [],
-          erro: 'Cancelado',
-        };
+        resultados[i] = { ...processos[i], erro: 'Cancelado' };
       }
     }
     return resultados;
@@ -300,8 +297,7 @@ export class PjeAdvogadosService {
       throw new Error('Sessao PJE expirada');
     }
 
-    const { advogadosPoloAtivo, advogadosPoloPassivo } = extractAdvogadosFromHtml(html);
-    return { ...proc, advogadosPoloAtivo, advogadosPoloPassivo };
+    return { ...proc, ...extractPolosFromHtml(html) };
   }
 
   private countFiltered(processos: ProcessoAdvogados[], filtros: FiltroAdvogado[]): number {
@@ -327,7 +323,9 @@ export class PjeAdvogadosService {
   }
 }
 
+// Tudo que a listagem da tarefa já entrega sem abrir o processo.
 function mapProcesso(e: any): ProcessoAdvogados {
+  const tags = Array.isArray(e.tagsProcessoList) ? e.tagsProcessoList : [];
   return {
     idProcesso: e.idProcesso,
     numeroProcesso: e.numeroProcesso || '',
@@ -336,6 +334,20 @@ function mapProcesso(e: any): ProcessoAdvogados {
     classeJudicial: e.classeJudicial,
     assuntoPrincipal: e.assuntoPrincipal,
     orgaoJulgador: e.orgaoJulgador,
+    nomeTarefa: e.nomeTarefa,
+    dataChegada: parseDataPje(e.dataChegada),
+    conferido: e.conferido,
+    sigiloso: e.sigiloso,
+    prioridade: e.prioridade,
+    etiquetas: tags.map((t: any) => t?.nomeTagCompleto || t?.nomeTag).filter(Boolean),
+    cargoJudicial: e.cargoJudicial,
+    ultimoMovimento: parseDataPje(e.ultimoMovimento),
+    descricaoUltimoMovimento: e.descricaoUltimoMovimento,
+    nivelAcesso: e.nivelAcesso,
+    podeInserirProcessoSessaoEmLote: e.podeInserirProcessoSessaoEmLote,
+    temParteMoradorDeRua: e.temParteMoradorDeRua,
+    partesPoloAtivo: [],
+    partesPoloPassivo: [],
     advogadosPoloAtivo: [],
     advogadosPoloPassivo: [],
   };

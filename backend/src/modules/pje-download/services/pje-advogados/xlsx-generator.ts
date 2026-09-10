@@ -1,4 +1,4 @@
-import type { ProcessoAdvogados, FiltroAdvogado, AdvogadoInfo } from '../../../../shared/types';
+import type { ProcessoAdvogados, FiltroAdvogado, AdvogadoInfo, ParteInfo } from '../../../../shared/types';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import ExcelJS from 'exceljs';
@@ -24,10 +24,7 @@ function normalizarOab(oab?: string): string {
   return oab.toUpperCase().replace('OAB', '').replace(/[\s\-./]/g, '');
 }
 
-/**
- * Verifica se algum advogado do processo corresponde ao filtro.
- * Match exato para OAB; substring case/accent-insensitive para nome.
- */
+// OAB: igualdade normalizada. Nome: substring sem acento/caixa.
 function processoCorrespondeFiltro(proc: ProcessoAdvogados, filtro: FiltroAdvogado): boolean {
   const advogados: AdvogadoInfo[] = [...proc.advogadosPoloAtivo, ...proc.advogadosPoloPassivo];
   if (advogados.length === 0) return false;
@@ -64,66 +61,131 @@ function gerarNomeSheetUnico(filtro: FiltroAdvogado, usados: Set<string>): strin
   return sanitizeSheetName(`Filtro_${Date.now()}`);
 }
 
+const MS_POR_DIA = 86_400_000;
+
+function dias(iso: string | undefined, agora: Date): number | '' {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? '' : Math.max(0, Math.floor((agora.getTime() - t) / MS_POR_DIA));
+}
+
+function dataBr(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('pt-BR', { timeZone: 'America/Bahia' });
+}
+
+const simNao = (v: boolean | undefined): string => (v === undefined ? '' : v ? 'Sim' : 'Não');
+
+// Sim = todas as partes do polo têm CPF/CNPJ; Parcial = só algumas; Não = nenhuma; vazio = polo não lido.
+function cadastro(partes: ParteInfo[]): string {
+  if (partes.length === 0) return '';
+  const com = partes.filter((p) => p.documento).length;
+  return com === partes.length ? 'Sim' : com === 0 ? 'Não' : 'Parcial';
+}
+const linhas = (xs: string[]): string => xs.filter(Boolean).join('\n');
+
+const COLUNAS: Array<{ titulo: string; largura: number }> = [
+  { titulo: 'Nº Processo', largura: 26 },
+  { titulo: 'Polo Ativo (Parte)', largura: 34 },
+  { titulo: 'CPF/CNPJ Polo Ativo', largura: 20 },
+  { titulo: 'CPF/CNPJ Polo Ativo?', largura: 12 },
+  { titulo: 'Advogado(s) Polo Ativo', largura: 36 },
+  { titulo: 'OAB Polo Ativo', largura: 16 },
+  { titulo: 'CPF Advogado(s) Polo Ativo', largura: 18 },
+  { titulo: 'Polo Passivo (Parte)', largura: 34 },
+  { titulo: 'CPF/CNPJ Polo Passivo', largura: 20 },
+  { titulo: 'CPF/CNPJ Polo Passivo?', largura: 12 },
+  { titulo: 'Advogado(s) Polo Passivo', largura: 36 },
+  { titulo: 'OAB Polo Passivo', largura: 16 },
+  { titulo: 'CPF Advogado(s) Polo Passivo', largura: 18 },
+  { titulo: 'Classe Judicial', largura: 18 },
+  { titulo: 'Assunto Principal', largura: 28 },
+  { titulo: 'Órgão Julgador', largura: 30 },
+  { titulo: 'Tarefa', largura: 34 },
+  { titulo: 'Data Chegada', largura: 18 },
+  { titulo: 'Dias na Tarefa', largura: 12 },
+  { titulo: 'Último Movimento', largura: 18 },
+  { titulo: 'Dias sem Movimento', largura: 12 },
+  { titulo: 'Descrição Último Movimento', largura: 40 },
+  { titulo: 'Etiquetas', largura: 26 },
+  { titulo: 'Cargo Judicial', largura: 22 },
+  { titulo: 'Conferido', largura: 10 },
+  { titulo: 'Sigiloso', largura: 10 },
+  { titulo: 'Prioridade', largura: 10 },
+  { titulo: 'Nível de Acesso', largura: 10 },
+  { titulo: 'Sessão em Lote', largura: 10 },
+  { titulo: 'Parte Moradora de Rua', largura: 12 },
+  { titulo: 'Status', largura: 18 },
+];
+const COL_STATUS = COLUNAS.length;
+
+function linhaProcesso(p: ProcessoAdvogados, agora: Date): Array<string | number> {
+  return [
+    p.numeroProcesso,
+    p.partesPoloAtivo.length ? linhas(p.partesPoloAtivo.map((x) => x.nome)) : p.poloAtivo,
+    linhas(p.partesPoloAtivo.map((x) => x.documento || '')),
+    cadastro(p.partesPoloAtivo),
+    linhas(p.advogadosPoloAtivo.map((a) => a.nome)),
+    linhas(p.advogadosPoloAtivo.map((a) => a.oab || '')),
+    linhas(p.advogadosPoloAtivo.map((a) => a.cpf || '')),
+    p.partesPoloPassivo.length ? linhas(p.partesPoloPassivo.map((x) => x.nome)) : p.poloPassivo,
+    linhas(p.partesPoloPassivo.map((x) => x.documento || '')),
+    cadastro(p.partesPoloPassivo),
+    linhas(p.advogadosPoloPassivo.map((a) => a.nome)),
+    linhas(p.advogadosPoloPassivo.map((a) => a.oab || '')),
+    linhas(p.advogadosPoloPassivo.map((a) => a.cpf || '')),
+    p.classeJudicial || '',
+    p.assuntoPrincipal || '',
+    p.orgaoJulgador || '',
+    p.nomeTarefa || '',
+    dataBr(p.dataChegada),
+    dias(p.dataChegada, agora),
+    dataBr(p.ultimoMovimento),
+    dias(p.ultimoMovimento, agora),
+    p.descricaoUltimoMovimento || '',
+    linhas(p.etiquetas || []),
+    p.cargoJudicial || '',
+    simNao(p.conferido),
+    simNao(p.sigiloso),
+    simNao(p.prioridade),
+    p.nivelAcesso ?? '',
+    simNao(p.podeInserirProcessoSessaoEmLote),
+    simNao(p.temParteMoradorDeRua),
+    p.erro || 'OK',
+  ];
+}
+
 function popularSheet(
   ws: ExcelJS.Worksheet,
   processos: ProcessoAdvogados[],
   filtroLabel?: string,
 ): void {
+  const agora = new Date();
   let primeiraLinhaDados = 1;
 
   if (filtroLabel) {
     const titulo = ws.getCell(1, 1);
     titulo.value = `Filtro aplicado — ${filtroLabel} — ${processos.length} processo(s)`;
     titulo.font = XLSX_TITLE_FONT;
-    ws.mergeCells(1, 1, 1, 11);
+    ws.mergeCells(1, 1, 1, COL_STATUS);
     primeiraLinhaDados = 2;
   }
 
-  ws.columns = [
-    { key: 'num', width: 28 },
-    { key: 'pa', width: 30 },
-    { key: 'adva', width: 38 },
-    { key: 'oaba', width: 18 },
-    { key: 'pp', width: 30 },
-    { key: 'advp', width: 38 },
-    { key: 'oabp', width: 18 },
-    { key: 'classe', width: 22 },
-    { key: 'assunto', width: 28 },
-    { key: 'orgao', width: 28 },
-    { key: 'status', width: 18 },
-  ];
-
-  const headers = [
-    'Nº Processo', 'Polo Ativo (Parte)', 'Advogado(s) Polo Ativo', 'OAB Polo Ativo',
-    'Polo Passivo (Parte)', 'Advogado(s) Polo Passivo', 'OAB Polo Passivo',
-    'Classe Judicial', 'Assunto Principal', 'Órgão Julgador', 'Status',
-  ];
+  ws.columns = COLUNAS.map((c) => ({ width: c.largura }));
 
   const headerRow = ws.getRow(primeiraLinhaDados);
-  headers.forEach((h, i) => {
+  COLUNAS.forEach((c, i) => {
     const cell = headerRow.getCell(i + 1);
-    cell.value = h;
+    cell.value = c.titulo;
     aplicarEstiloCabecalho(cell);
   });
 
   processos.forEach((p, idx) => {
     const row = ws.getRow(primeiraLinhaDados + 1 + idx);
-    row.values = [
-      p.numeroProcesso,
-      p.poloAtivo,
-      p.advogadosPoloAtivo.map((a) => a.nome).join('\n'),
-      p.advogadosPoloAtivo.map((a) => a.oab || '').filter(Boolean).join('\n'),
-      p.poloPassivo,
-      p.advogadosPoloPassivo.map((a) => a.nome).join('\n'),
-      p.advogadosPoloPassivo.map((a) => a.oab || '').filter(Boolean).join('\n'),
-      p.classeJudicial || '',
-      p.assuntoPrincipal || '',
-      p.orgaoJulgador || '',
-      p.erro || 'OK',
-    ];
+    row.values = linhaProcesso(p, agora);
     row.eachCell((cell) => { aplicarEstiloDado(cell); });
-    const statusCell = row.getCell(11);
-    statusCell.font = {
+    row.getCell(COL_STATUS).font = {
       name: 'Arial', size: 10,
       color: { argb: p.erro ? 'FFFF0000' : 'FF008000' },
     };
@@ -133,17 +195,13 @@ function popularSheet(
   if (ultimaLinha > primeiraLinhaDados) {
     ws.autoFilter = {
       from: { row: primeiraLinhaDados, column: 1 },
-      to: { row: ultimaLinha, column: 11 },
+      to: { row: ultimaLinha, column: COL_STATUS },
     };
   }
-  ws.views = [{ state: 'frozen', ySplit: primeiraLinhaDados }];
+  ws.views = [{ state: 'frozen', xSplit: 1, ySplit: primeiraLinhaDados }];
 }
 
-/**
- * Gera planilha XLSX multi-sheet:
- * - Sheet "Geral" com todos os processos
- * - Uma sheet por filtro com apenas os processos correspondentes
- */
+// Sheet "Geral" com tudo + uma sheet por filtro de advogado.
 export async function gerarXlsx(
   processos: ProcessoAdvogados[],
   filtros: FiltroAdvogado[] = [],
@@ -151,11 +209,11 @@ export async function gerarXlsx(
   if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const fileName = `advogados_pje_${timestamp}.xlsx`;
+  const fileName = `processos_completo_${timestamp}.xlsx`;
   const filePath = path.join(OUTPUT_DIR, fileName);
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'PJE Download';
+  wb.creator = 'Fórum Hub';
   wb.created = new Date();
 
   const wsGeral = wb.addWorksheet('Geral');

@@ -41,7 +41,7 @@ export function DownloadAction({
   const obterLabel = (): string => {
     if (carregando) return 'Processando…';
     if (!valido) return isAdvogados ? 'Gerar planilha' : 'Baixar processos';
-    if (isAdvogados) return 'Gerar planilha de advogados';
+    if (isAdvogados) return 'Gerar planilha completa';
     const sufixo = numTipos > 0 ? ` × ${numTipos} tipo(s)` : '';
     if (modo === 'by_task' && numTarefas > 0) return `Baixar ${totalProcessos} processo(s) de ${numTarefas} tarefa(s)${sufixo}`;
     if (modo === 'by_tag' && numEtiquetas > 0) return `Baixar processos de ${numEtiquetas} etiqueta(s)${sufixo}`;

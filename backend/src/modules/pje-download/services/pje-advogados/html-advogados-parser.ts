@@ -1,16 +1,7 @@
-import type { AdvogadoInfo } from '../../../../shared/types';
+import type { AdvogadoInfo, ParteInfo, TipoPolo } from '../../../../shared/types';
 
-/**
- * Parser HTML para extração de advogados do PJE/TJBA.
- *
- * Estratégia (alinhada com pje_automation_gui Python):
- * 1. Localizar SECAO de cada polo via div id="poloAtivo" / "poloPassivo"
- * 2. Para cada seção, buscar <a href="...%28ADVOGADO%29..."><span>DADOS</span></a>
- *    Esse padrão é específico — o href contém "(ADVOGADO)" URL-encoded,
- *    o que descarta links de partes (AUTOR, REU, REQUERENTE, etc).
- * 3. Fallback: <a> com %28DEFENSOR para defensores públicos.
- * 4. Parsear o span: "NOME - OAB UFNUM - CPF: XXX (ADVOGADO)"
- */
+// Lê os polos da página listAutosDigitais.seam: cada <tr> tem a parte no
+// primeiro <a pessoaHome=...> e os representantes numa <ul class="tree">.
 
 const HTML_ENTITY_MAP: Record<string, string> = {
   '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"',
@@ -26,6 +17,8 @@ const HTML_ENTITY_MAP: Record<string, string> = {
   '&ordf;': 'ª', '&ordm;': 'º',
 };
 
+const REPRESENTANTE_HREF = /%28(ADVOGADO|DEFENSOR)/i;
+
 function decodeHtml(text: string): string {
   if (!text) return '';
   return text
@@ -34,131 +27,108 @@ function decodeHtml(text: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, c) => String.fromCharCode(parseInt(c, 16)));
 }
 
-function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, '');
-}
-
 function cleanText(raw: string): string {
-  return decodeHtml(stripTags(raw)).replace(/\s+/g, ' ').trim();
+  return decodeHtml(raw.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Extrai a seção HTML de um polo (poloAtivo ou poloPassivo).
- * Procura o início do div com id correspondente e termina no próximo div
- * de mesmo nível (poloPassivo, recursosInternos, maisDetalhes).
- */
 function extractPoloSection(html: string, poloId: 'poloAtivo' | 'poloPassivo'): string {
-  const startRegex = new RegExp(`<div\\s+id="${poloId}"[^>]*>`, 'i');
-  const startMatch = html.match(startRegex);
-  if (!startMatch || startMatch.index === undefined) return '';
-
-  const startPos = startMatch.index;
-  const fimIds = ['poloAtivo', 'poloPassivo', 'recursosInternos', 'maisDetalhes']
-    .filter((id) => id !== poloId);
+  const start = html.match(new RegExp(`<div\\s+id="${poloId}"[^>]*>`, 'i'));
+  if (!start || start.index === undefined) return '';
+  const startPos = start.index;
 
   let endPos = html.length;
-  for (const fid of fimIds) {
-    const re = new RegExp(`<div\\s+id="${fid}"`, 'i');
-    const m = html.substring(startPos + 20).match(re);
-    if (m && m.index !== undefined) {
-      const candidate = startPos + 20 + m.index;
-      if (candidate < endPos) endPos = candidate;
-    }
+  for (const fid of ['poloAtivo', 'poloPassivo', 'recursosInternos', 'maisDetalhes']) {
+    if (fid === poloId) continue;
+    const m = html.substring(startPos + 20).match(new RegExp(`<div\\s+id="${fid}"`, 'i'));
+    if (m?.index !== undefined) endPos = Math.min(endPos, startPos + 20 + m.index);
   }
-
   return html.substring(startPos, endPos);
 }
 
-/**
- * Parseia o conteúdo do span de um advogado.
- * Formato: "NOME - OAB UFNUM - CPF: XXX.XXX.XXX-XX (ADVOGADO)"
- */
-function parseAdvogadoSpan(spanContent: string, tipoParte: 'ATIVO' | 'PASSIVO'): AdvogadoInfo | null {
+// "NOME - OAB UFNUM - CPF: XXX (ADVOGADO)"
+function parseAdvogadoSpan(spanContent: string, tipoParte: TipoPolo): AdvogadoInfo | null {
   const texto = cleanText(spanContent);
-  if (!texto || texto.length < 3) return null;
+  if (texto.length < 3) return null;
 
-  // Descarta se for parte (proteção extra)
-  if (/^\s*\((AUTOR|REU|RÉU|REQUERENTE|REQUERIDO|EXEQUENTE|EXECUTADO|IMPETRANTE|IMPETRADO)\)/i.test(texto)) {
-    return null;
-  }
-
-  // OAB: "OAB BA33407", "OAB SE 6662", "OAB BA 33407A"
-  const oabMatch = texto.match(/OAB\s*([A-Z]{2})\s*(\d+[A-Z]?)/i);
+  const oabMatch = texto.match(/OAB\s*([A-Z]{2})\s*(\d+(?:-?[A-Z])?)/i);
   const oab = oabMatch ? `OAB ${oabMatch[1].toUpperCase()}${oabMatch[2]}` : undefined;
+  const cpf = texto.match(/CPF:\s*([\d.\-/]+)/i)?.[1];
 
-  // CPF: "CPF: 130.886.688-70"
-  const cpfMatch = texto.match(/CPF:\s*([\d.\-/]+)/i);
-  const cpf = cpfMatch?.[1];
-
-  // Nome: tudo antes de " - OAB" ou " - CPF" ou " (ADVOGADO)" ou " (DEFENSOR"
-  let nome = '';
   const nomeMatch = texto.match(/^(.+?)(?:\s*-\s*OAB|\s*-\s*CPF|\s*\(ADVOGADO\)|\s*\(DEFENSOR)/i);
-  if (nomeMatch) {
-    nome = nomeMatch[1].trim();
-  } else {
-    nome = texto.replace(/\s*\(ADVOGADO\).*$/i, '').replace(/\s*\(DEFENSOR[^)]*\).*$/i, '').trim();
-  }
-  nome = nome.replace(/[\s\-–]+$/g, '').trim();
-
-  if (!nome || nome.length < 3) return null;
+  const nome = (nomeMatch ? nomeMatch[1] : texto.replace(/\s*\((ADVOGADO|DEFENSOR)[^)]*\).*$/i, ''))
+    .replace(/[\s\-–]+$/g, '').trim();
+  if (nome.length < 3) return null;
 
   return { nome, oab, cpf, tipoParte };
 }
 
-/**
- * Extrai advogados de uma seção HTML específica de um polo.
- * Usa apenas padrões SEGUROS:
- * - Links cujo href contém %28ADVOGADO%29 (URL-encoded "(ADVOGADO)")
- * - Links cujo href contém %28DEFENSOR (DEFENSOR PÚBLICO/DATIVO)
- *
- * NÃO usa padrões amplos como "qualquer span com (ADVOGADO)" ou
- * "link com OAB" pois geram falsos positivos (partes que mencionam
- * advogados, links de pessoaHome de partes, etc).
- */
-function extractAdvogadosFromSection(sectionHtml: string, tipoParte: 'ATIVO' | 'PASSIVO'): AdvogadoInfo[] {
+// "NOME - CPF: XXX (AUTOR)" | "EMPRESA - CNPJ: XXX (REU)" | "NOME (EXEQUENTE)"
+function parseParteSpan(spanContent: string, tipoParte: TipoPolo): ParteInfo | null {
+  const texto = cleanText(spanContent);
+  if (texto.length < 3) return null;
+
+  const docMatch = texto.match(/(CPF|CNPJ):\s*([\d.\-/]+)/i);
+  const participacao = texto.match(/\(([^()]+)\)\s*$/)?.[1]?.trim();
+  const nome = texto
+    .replace(/\s*-\s*(CPF|CNPJ):.*$/i, '')
+    .replace(/\s*\([^()]+\)\s*$/, '')
+    .replace(/[\s\-–]+$/g, '').trim();
+  if (nome.length < 3) return null;
+
+  return {
+    nome, tipoParte, participacao,
+    documento: docMatch?.[2],
+    tipoDocumento: docMatch ? (docMatch[1].toUpperCase() as 'CPF' | 'CNPJ') : undefined,
+  };
+}
+
+function extractAdvogadosFromSection(sectionHtml: string, tipoParte: TipoPolo): AdvogadoInfo[] {
   const advogados: AdvogadoInfo[] = [];
   const seen = new Set<string>();
-
-  const addUnique = (adv: AdvogadoInfo | null): void => {
-    if (!adv) return;
-    const key = adv.nome.toUpperCase().trim();
-    if (seen.has(key)) return;
-    seen.add(key);
+  // Só o primeiro <span> do link: depois dele pode vir <img> (domicílio eletrônico).
+  const pattern = /<a\s+href="[^"]*%28(?:ADVOGADO%29|DEFENSOR)[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/gi;
+  for (const m of sectionHtml.matchAll(pattern)) {
+    const adv = parseAdvogadoSpan(m[1], tipoParte);
+    if (!adv || seen.has(adv.nome.toUpperCase())) continue;
+    seen.add(adv.nome.toUpperCase());
     advogados.push(adv);
-  };
-
-  // Padrão 1: link com %28ADVOGADO%29 + span filho
-  const advogadoPattern = /<a\s+href="[^"]*%28ADVOGADO%29[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>\s*<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = advogadoPattern.exec(sectionHtml)) !== null) {
-    addUnique(parseAdvogadoSpan(m[1], tipoParte));
   }
-
-  // Padrão 2: link com %28DEFENSOR... (DEFENSOR PÚBLICO ou DEFENSOR DATIVO)
-  const defensorPattern = /<a\s+href="[^"]*%28DEFENSOR[^"]*"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>\s*<\/a>/gi;
-  while ((m = defensorPattern.exec(sectionHtml)) !== null) {
-    addUnique(parseAdvogadoSpan(m[1], tipoParte));
-  }
-
   return advogados;
 }
 
-/**
- * API pública: extrai advogados do HTML completo de listAutosDigitais.seam.
- */
-export function extractAdvogadosFromHtml(html: string): {
+function extractPartesFromSection(sectionHtml: string, tipoParte: TipoPolo): ParteInfo[] {
+  const partes: ParteInfo[] = [];
+  const seen = new Set<string>();
+  for (const tr of sectionHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const link = tr[1].match(/<a\s+href="([^"]*pessoaHome=[^"]*)"[^>]*>\s*<span[^>]*>([\s\S]*?)<\/span>/i);
+    if (!link || REPRESENTANTE_HREF.test(link[1])) continue;
+    const parte = parseParteSpan(link[2], tipoParte);
+    if (!parte || seen.has(parte.nome.toUpperCase())) continue;
+    seen.add(parte.nome.toUpperCase());
+    partes.push(parte);
+  }
+  return partes;
+}
+
+export interface PolosExtraidos {
   advogadosPoloAtivo: AdvogadoInfo[];
   advogadosPoloPassivo: AdvogadoInfo[];
-} {
-  if (!html || html.length < 500) {
-    return { advogadosPoloAtivo: [], advogadosPoloPassivo: [] };
-  }
+  partesPoloAtivo: ParteInfo[];
+  partesPoloPassivo: ParteInfo[];
+}
 
-  const ativoSection = extractPoloSection(html, 'poloAtivo');
-  const passivoSection = extractPoloSection(html, 'poloPassivo');
+export function extractPolosFromHtml(html: string): PolosExtraidos {
+  const vazio: PolosExtraidos = {
+    advogadosPoloAtivo: [], advogadosPoloPassivo: [], partesPoloAtivo: [], partesPoloPassivo: [],
+  };
+  if (!html || html.length < 500) return vazio;
 
-  const advogadosPoloAtivo = ativoSection ? extractAdvogadosFromSection(ativoSection, 'ATIVO') : [];
-  const advogadosPoloPassivo = passivoSection ? extractAdvogadosFromSection(passivoSection, 'PASSIVO') : [];
-
-  return { advogadosPoloAtivo, advogadosPoloPassivo };
+  const ativo = extractPoloSection(html, 'poloAtivo');
+  const passivo = extractPoloSection(html, 'poloPassivo');
+  return {
+    advogadosPoloAtivo: ativo ? extractAdvogadosFromSection(ativo, 'ATIVO') : [],
+    advogadosPoloPassivo: passivo ? extractAdvogadosFromSection(passivo, 'PASSIVO') : [],
+    partesPoloAtivo: ativo ? extractPartesFromSection(ativo, 'ATIVO') : [],
+    partesPoloPassivo: passivo ? extractPartesFromSection(passivo, 'PASSIVO') : [],
+  };
 }

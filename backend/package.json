@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "balanco:saneamento": "tsx src/scripts/balanco-saneamento.ts",
+    "balanco:saneamento": "tsx src/scripts/balanco-saneamento.ts"
   },
   "packageManager": "pnpm@10.28.2",
   "dependencies": {

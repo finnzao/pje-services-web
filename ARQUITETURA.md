@@ -36,8 +36,10 @@ Justiça da Bahia (1º grau)**:
 - **Download de Processos** — baixa os autos digitais (PDF/ZIP) de todos os processos de uma ou
   mais tarefas, etiquetas, lista de números CNJ ou resultado de pesquisa, com filtro opcional por
   tipo de documento.
-- **Planilha de Advogados** — extrai advogados (nome, OAB, CPF) dos polos ativo/passivo de cada
-  processo e gera um `.xlsx` multi-abas com filtros por nome ou OAB.
+- **Informações Completas dos Processos** (antiga "Planilha de Advogados") — para cada processo
+  junta o que a listagem da tarefa já entrega (polos, classe, assunto, tarefa, datas de chegada e
+  último movimento, etiquetas, sigilo, prioridade) com as partes (nome, CPF/CNPJ, participação) e
+  os advogados (nome, OAB, CPF) lidos dos autos, num `.xlsx` multi-abas com filtros por nome ou OAB.
 - **Pesquisa Geral** — usa a Consulta Processual pública do PJE para gerar planilhas de resultados
   (com a coluna "Nó(s) atual(is)") ou baixar os processos encontrados, inclusive em *fila*
   (vários nomes de parte processados em sequência).
@@ -66,7 +68,7 @@ Monorepo `pnpm` com dois aplicativos independentes (instalação e deploy separa
 
 | App | Tecnologias | Papel |
 | --- | --- | --- |
-| `backend/` | Fastify 5, TypeScript (CommonJS, target ES2022), pino, ExcelJS, JSZip, tsx (dev) | API REST + SSE; proxy de autenticação e scraping do PJE; geração das planilhas de advogados e por dígito no servidor |
+| `backend/` | Fastify 5, TypeScript (CommonJS, target ES2022), pino, ExcelJS, JSZip, tsx (dev) | API REST + SSE; proxy de autenticação e scraping do PJE; geração das planilhas de informações completas e por dígito no servidor |
 | `frontend/` | Next.js 16.1.6 (App Router), React 19.2.3, Tailwind CSS v4, lucide-react, JSZip (só como empacotador) | SPA de página única (`/pje/pje-download`); orquestra downloads no navegador e gera XLSX de pesquisa no cliente |
 
 - **Node 20+**, `pnpm@10.28.2` fixado via `packageManager`/Corepack.
@@ -243,23 +245,56 @@ O empacotador (`lib/zip-stream.ts`) é uma implementação própria de ZIP em st
 `redownloadZip()` permite baixar novamente o lote ao final, inclusive reempacotando a pasta no
 modo fsapi.
 
-## 7 · Planilha de advogados
+## 7 · Informações completas dos processos (antiga planilha de advogados)
 
-Único serviço que roda inteiro no servidor. `POST /api/pje/advogados/gerar` responde
-**202 {jobId}** imediatamente (fire-and-forget) e o frontend faz polling de `/progress` a cada
-2,5 s até `completed|failed|cancelled`.
+Roda inteiro no servidor, no módulo `pje-advogados` (nome interno mantido). `POST
+/api/pje/advogados/gerar` responde **202 {jobId}** imediatamente (fire-and-forget) e o frontend faz
+polling de `/progress` a cada 2,5 s até `completed|failed|cancelled`.
 
 1. **Sessão:** prioriza `pjeSessionId` existente (por isso funciona após F5, sem senha em
    memória); fallback para login com credenciais + `pjeProfileIndex`.
 2. **Listagem:** mesmas fontes do download, com suporte a **múltiplas tarefas** (`taskNames[]`) e
-   **etiquetas** (`tagIds[]`), dedup global por `idProcesso`.
-3. **Extração (10→90%):** 4 workers concorrentes (stagger 250 ms) abrem
-   `listAutosDigitais.seam` de cada processo e o parser recorta as seções
-   `#poloAtivo`/`#poloPassivo`, aceitando apenas âncoras com `%28ADVOGADO%29`/`%28DEFENSOR` no
-   href (evita falsos positivos com partes). De cada span extrai nome, `OAB {UF}{número}` e CPF.
-4. **Geração (92%):** ExcelJS grava `downloads/planilhas/advogados_pje_{ts}.xlsx` — aba
-   **Geral** + uma aba por filtro (`nome` por substring sem acentos; `oab` por igualdade
-   normalizada), cabeçalho congelado, autofiltro, status verde/vermelho por processo.
+   **etiquetas** (`tagIds[]`), dedup global por `idProcesso`. A linha de
+   `recuperarProcessosTarefaPendenteComCriterios` já traz, sem abrir o processo: polos (texto),
+   classe, assunto principal, órgão julgador, tarefa, `dataChegada`, `ultimoMovimento` e sua
+   descrição, `tagsProcessoList`, cargo judicial, conferido, sigiloso, prioridade, nível de acesso
+   e morador de rua. É o mesmo endpoint que o botão "baixar lista" do painel do PJE usa. O nome
+   da tarefa vai na URL exatamente como o painel devolve (há tarefas com espaço inicial) e a
+   paginação confere o coletado com o `count` da resposta, avisando no log se ficou incompleta.
+3. **Captura nos autos (10→90%):** 4 workers concorrentes (stagger 250 ms) abrem
+   `listAutosDigitais.seam` de cada processo e o parser recorta `#poloAtivo`/`#poloPassivo`. Em
+   cada `<tr>` o primeiro `<a pessoaHome=…>` é a parte (`NOME - CPF: … (AUTOR)` ou
+   `EMPRESA - CNPJ: … (REU)`), de onde saem nome, documento, tipo (CPF/CNPJ) e participação; a
+   `<ul class="tree">` traz os representantes, aceitos apenas com `%28ADVOGADO%29`/`%28DEFENSOR`
+   no href, de onde saem nome, `OAB {UF}{número}` e CPF.
+4. **Geração (92%):** ExcelJS grava `downloads/planilhas/processos_completo_{ts}.xlsx` — aba
+   **Geral** + uma aba por filtro de advogado (`nome` por substring sem acentos; `oab` por
+   igualdade normalizada). 31 colunas: partes e documentos por polo, advogados (nome, OAB, CPF)
+   por polo, colunas **"CPF/CNPJ Polo Ativo?"** e **"CPF/CNPJ Polo Passivo?"** (Sim = todas as
+   partes do polo têm documento, Parcial, Não, ou vazio quando os autos não foram lidos — é o
+   critério que decide se o processo conta na meta e aponta qual polo precisa de cadastro), campos
+   da listagem, dias na tarefa e dias sem movimento calculados na geração, status verde/vermelho.
+   Primeira coluna e cabeçalho congelados, autofiltro.
+5. **Balanço de saneamento (script):** `pnpm balanco:saneamento <planilha.xlsx> [--anos=2]
+   [--desde=AAAA-MM-DD]` lê a aba Geral e mede o passivo de CPF/CNPJ dos processos
+   **arquivados/baixados nos últimos dois anos** (pela data do último movimento; tarefa `arquiv` ou
+   movimento "Baixa Definitiva", regex ajustáveis por `--arquivo`/`--baixa`). O DataJud rejeita
+   partes sem documento válido, então sentença ou baixa em processo "sujo" é trabalho que não conta
+   nas Metas 1/2, derruba o IQD do Prêmio CNJ de Qualidade e fica como pendência permanente no
+   painel de saneamento. O relatório aponta qual polo falta, agrupa por ano de arquivamento e por
+   classe, separa os processos em tramitação (corrigir antes de arquivar) e compara o cenário atual
+   com "se todos tivessem passado pelo saneamento" (baixas que contariam a mais). Sai um `.xlsx`
+   com Resumo, Por ano, Por classe e as listas de pendentes. Funções puras cobertas em
+   `balanco-saneamento.test.ts`.
+5. **Balanço de saneamento (script):** `pnpm balanco:saneamento <planilha.xlsx>` lê a aba Geral e
+   mede o passivo de CPF/CNPJ. O DataJud rejeita partes sem documento válido, então sentença ou
+   baixa em processo "sujo" é trabalho que não conta nas Metas 1/2, derruba o IQD do Prêmio CNJ de
+   Qualidade e fica para sempre como pendência no painel de saneamento. O relatório separa
+   arquivados/baixados (tarefa `arquiv` ou movimento "Baixa Definitiva", regex ajustáveis por
+   `--arquivo`/`--baixa`) de processos em tramitação, aponta qual polo falta, agrupa por ano CNJ e
+   classe, e compara o cenário atual com "se todos tivessem passado pelo saneamento" (baixas que
+   contariam a mais). Sai um `.xlsx` com Resumo, Por ano, Por classe e as listas de processos
+   pendentes. Funções puras cobertas em `balanco-saneamento.test.ts`.
 5. **Download:** `GET /:jobId/download` serve o `.xlsx` — atenção: devolve o arquivo *mais
    recente* do diretório, não o do jobId (race com jobs concorrentes).
 
@@ -384,7 +419,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | `queued` / `not_available` / `item_error` | por item, com `message`/`code` |
 | `cancelled` / `done` / `fatal` | `done: {total, totalRequests, success, failed, notAvailable, reused, elapsed, cancelled}` |
 
-### Advogados — `/api/pje/advogados` (exige `x-user`)
+### Informações completas dos processos — `/api/pje/advogados` (exige `x-user`; rota mantém o nome antigo)
 
 | Rota | Descrição |
 | --- | --- |
@@ -413,7 +448,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Polling da Área de Download | início 5 s · backoff até 30 s · timeout 10 min | url-extractor |
 | Página de listagem (tarefas/etiquetas) | 500 · teto 10 000 (by_task) | strategies |
 | Pesquisa geral | 20/página · máx. 1 000 resultados | consulta-publica |
-| Extração de advogados | 4 workers · stagger 250 ms | pje-advogados.service |
+| Captura de partes/advogados nos autos | 4 workers · stagger 250 ms | pje-advogados.service |
 | Último movimento (planilha por dígito) | 4 workers · stagger 250 ms | planilha-digito.service |
 | Motor de peso (blocos A–F) | A≤40 · B≤20 · C≤25 · D≤15 · E≤10 · F 1,0/0,3 · réguas 100/120 dias · faixas 70/50/30 · meta a um passo ≤ 2 | digito-core (`CONFIG_PESO_PADRAO`) |
 | TTL do progressMap (planilha por dígito) | jobs terminais > 1 h, varridos a cada 30 min | planilha-digito.service |

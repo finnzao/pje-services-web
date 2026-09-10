@@ -1,10 +1,22 @@
+export type TipoPolo = 'ATIVO' | 'PASSIVO';
+
 export interface AdvogadoInfo {
-  nome: string; oab?: string; cpf?: string; tipoParte: 'ATIVO' | 'PASSIVO';
+  nome: string; oab?: string; cpf?: string; tipoParte: TipoPolo;
 }
 
+export interface ParteInfo {
+  nome: string; documento?: string; tipoDocumento?: 'CPF' | 'CNPJ';
+  participacao?: string; tipoParte: TipoPolo;
+}
+
+/** Linha da planilha "Informações Completas": dados da listagem da tarefa + polos lidos dos autos. */
 export interface ProcessoAdvogados {
   numeroProcesso: string; idProcesso: number; poloAtivo: string; poloPassivo: string;
   classeJudicial?: string; assuntoPrincipal?: string; orgaoJulgador?: string;
+  nomeTarefa?: string; dataChegada?: string; conferido?: boolean; sigiloso?: boolean; prioridade?: boolean;
+  etiquetas?: string[]; cargoJudicial?: string; ultimoMovimento?: string; descricaoUltimoMovimento?: string;
+  nivelAcesso?: number; podeInserirProcessoSessaoEmLote?: boolean; temParteMoradorDeRua?: boolean;
+  partesPoloAtivo: ParteInfo[]; partesPoloPassivo: ParteInfo[];
   advogadosPoloAtivo: AdvogadoInfo[]; advogadosPoloPassivo: AdvogadoInfo[];
   erro?: string;
 }

@@ -23,8 +23,8 @@ const SERVICOS: ServicoItem[] = [
   {
     id: 'advogados',
     icone: <FileSpreadsheet size={22} />,
-    titulo: 'Planilha de Advogados',
-    descricao: 'Gere uma planilha com os advogados de cada processo.',
+    titulo: 'Informações Completas dos Processos',
+    descricao: 'Planilha com partes (CPF/CNPJ), advogados, tarefa, etiquetas e movimentação de cada processo.',
     accent: 'emerald',
   },
   {

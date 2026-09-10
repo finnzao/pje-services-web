@@ -1,6 +1,6 @@
 # PJE Download — TJBA
 
-Aplicação para download de processos do PJE/TJBA e geração de planilhas de advogados.
+Aplicação para download de processos do PJE/TJBA e geração de planilhas: informações completas dos processos (partes, CPF/CNPJ, advogados, tarefa) e distribuição por dígito.
 
 O projeto é dividido em dois aplicativos independentes:
 

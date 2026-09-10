@@ -55,7 +55,7 @@ export async function downloadPlanilha(jobId: string): Promise<void> {
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition');
   const fileNameMatch = disposition?.match(/filename="?([^"]+)"?/);
-  const fileName = fileNameMatch?.[1] || `advogados_pje_${jobId.slice(0, 8)}.xlsx`;
+  const fileName = fileNameMatch?.[1] || `processos_completo_${jobId.slice(0, 8)}.xlsx`;
 
   const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
