@@ -351,7 +351,12 @@ sobrescritos pontualmente no DTO (`pesos`).
    recebe `SEM_ETIQUETA_SERVIDOR`; etiqueta apontando para outro servidor da atribuição vira
    `ETIQUETA_DIVERGENTE` (o cálculo pelo dígito prevalece). O resumo do job alimenta o aviso de
    etiquetagem no frontend — a etiquetagem em lote pelo próprio Fórum Hub é evolução prevista.
-5. **Saída e download:** abas com cabeçalho congelado (linha 4), autofiltro, destaque de dias
+5. **Saída e download:** aba **Resumo** primeiro no `.xlsx` (ou `Resumo.xlsx` solto no `.zip`) com
+   1. Totais gerais, 2. Totais por servidor (trabalháveis, P1–P4, fila, crítico/alto, linha TOTAL),
+   3. Metas a um passo de zerar e 4. Demais metas; paleta da planilha de validação BI da unidade
+   (cabeçalho `1F4E78`, linha tingida pela prioridade P1 rosa/P2 laranja/P3 amarelo/P4 verde, dias
+   parados laranja > 100 e vermelho > 120, meta lilás, flag salmão, legenda de cores na linha 3).
+   Demais abas com cabeçalho congelado (linha 4), autofiltro, destaque de dias
    (laranja ≥ 100, vermelho ≥ 120) e estilos compartilhados (`xlsx-common.ts`). O arquivo é
    nomeado com o jobId e `GET /:jobId/download` resolve **pelo jobId** — não repete o padrão
    "arquivo mais recente" de advogados. O `progressMap` tem TTL: jobs terminais expiram em 1 h,
@@ -435,7 +440,8 @@ devolve 400 com a lista de erros. O arquivo em disco é revalidado no boot.
    `simulada_*` sem chamar o PJE.
 7. **Histórico** — cada execução (`ExecucaoEtiquetas`: origem, dry-run, etapa, totais por motivo,
    processos afetados, snapshot da configuração) fica em `.etiquetas-execucoes.json` (30 mais
-   recentes, 2 000 processos por execução). Execução `running` encontrada no boot vira `failed`.
+   recentes, com a lista completa de processos afetados — o teto é o `limitePorExecucao`). Execução
+   `running` encontrada no boot vira `failed`.
 
 Uma execução por vez: nova chamada durante outra recebe 409; `DELETE /execucoes/:id` cancela.
 
@@ -445,7 +451,8 @@ Uma execução por vez: nova chamada durante outra recebe 409; `DELETE /execucoe
 remoção. Cada disparo grava esses parâmetros via `PUT /config` (é a configuração que a rotina
 automática usará) e chama `POST /executar`; a UI oferece **Simular** (dry-run) e **Etiquetar** com
 confirmação inline, faz polling de `GET /execucoes/:id` a cada 2,5 s e mostra totais, motivos de
-exclusão e a tabela de processos afetados.
+exclusão e a tabela de processos afetados, com botão para baixar a planilha `.xlsx` desses
+processos (`GET /execucoes/:id/planilha`).
 
 ### 10.3 · Agendador (`EtiquetasScheduler`)
 
@@ -521,6 +528,7 @@ fallbacks. `ETIQUETAS_SCHEDULER=off` desliga o worker (instância secundária, t
 | `POST /executar` | `{dryRun?, pjeSessionId?, credentials?, pjeProfileIndex?}` → 202 `{execucaoId}`; 409 se já há execução; 401 `SESSAO_PJE_INDISPONIVEL` |
 | `GET /execucoes` | Histórico (30 mais recentes, sem a lista de processos) |
 | `GET /execucoes/:id` | Execução completa: `{status, etapa, progresso, mensagem, totais{…, ignorados{motivo: n}}, processos[], configSnapshot}` |
+| `GET /execucoes/:id/planilha` | `.xlsx` dos processos afetados (número, tarefa, dias parados, última movimentação, ação, erro), gerado em memória a partir do histórico; 409 enquanto `running` |
 | `DELETE /execucoes/:id` | Cancela a execução em andamento |
 
 ## 12 · Constantes e limites operacionais
@@ -536,7 +544,7 @@ fallbacks. `ETIQUETAS_SCHEDULER=off` desliga o worker (instância secundária, t
 | Pesquisa geral | 20/página · máx. 1 000 resultados | consulta-publica |
 | Captura de partes/advogados nos autos | 4 workers · stagger 250 ms | pje-advogados.service |
 | Último movimento (planilha por dígito) | 4 workers · stagger 250 ms | planilha-digito.service |
-| Etiquetas automáticas | último movimento 4 workers · 250 ms; inserir/remover 2 workers · 300 ms; teto 500 ações/execução; tick 60 s; keep-alive 4 min; histórico 30 execuções × 2 000 processos | etiquetas.service / scheduler |
+| Etiquetas automáticas | último movimento 4 workers · 250 ms; inserir/remover 2 workers · 300 ms; teto 500 ações/execução; tick 60 s; keep-alive 4 min; histórico 30 execuções (processos sem corte; teto = limitePorExecucao, máx. 5 000) | etiquetas.service / scheduler |
 | Motor de peso (blocos A–F) | A≤40 · B≤20 · C≤25 · D≤15 · E≤10 · F 1,0/0,3 · réguas 100/120 dias · faixas 70/50/30 · meta a um passo ≤ 2 | digito-core (`CONFIG_PESO_PADRAO`) |
 | TTL do progressMap (planilha por dígito) | jobs terminais > 1 h, varridos a cada 30 min | planilha-digito.service |
 | TTL sessão / sessão por CPF | 30 min (deslizante) / 4 h | session-store |

@@ -167,7 +167,7 @@ export class PlanilhaDigitoService {
         digitosPorServidor.set(servidor, [...(digitosPorServidor.get(servidor) ?? []), digito]);
       }
 
-      const { fileName } = await gerarSaidaDigito(distribuicao, digitosPorServidor, dto.formato, jobId, pesos);
+      const { fileName } = await gerarSaidaDigito(distribuicao, digitosPorServidor, dto.formato, jobId, pesos, metasRestantes);
 
       const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa, metasRestantes, pesos, processos);
       emit({

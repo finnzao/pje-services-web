@@ -3,13 +3,14 @@ import * as path from 'node:path';
 import type { ExecucaoEtiquetas, ExecucaoResumo } from './types';
 
 /**
- * Histórico das execuções (agendadas e manuais) em disco. Mantém as N mais recentes;
- * a lista de processos por execução é limitada para o arquivo não crescer sem controle.
+ * Histórico das execuções (agendadas e manuais) em disco. Mantém as N mais recentes,
+ * cada uma com a lista completa de processos afetados (o teto natural é
+ * limitePorExecucao da configuração — não há corte adicional aqui, para a planilha
+ * de download refletir todos os processos etiquetados).
  */
 const HISTORICO_FILE = process.env.ETIQUETAS_HISTORICO_FILE
   || path.join(process.cwd(), '.etiquetas-execucoes.json');
 const MAX_EXECUCOES = 30;
-const MAX_PROCESSOS_POR_EXECUCAO = 2000;
 
 class ExecucoesStore {
   private execucoes = new Map<string, ExecucaoEtiquetas>();
@@ -18,9 +19,6 @@ class ExecucoesStore {
 
   upsert(exec: ExecucaoEtiquetas): void {
     this.carregarSeNecessario();
-    if (exec.processos.length > MAX_PROCESSOS_POR_EXECUCAO) {
-      exec = { ...exec, processos: exec.processos.slice(0, MAX_PROCESSOS_POR_EXECUCAO) };
-    }
     this.execucoes.set(exec.id, exec);
     this.podar();
     this.agendarPersistencia();

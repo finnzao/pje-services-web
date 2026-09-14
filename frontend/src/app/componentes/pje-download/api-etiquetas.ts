@@ -1,4 +1,4 @@
-import { request } from '../../lib/api-client';
+import { API_BASE, request } from '../../lib/api-client';
 
 export interface EtiquetaRef { id: number; nome: string; }
 
@@ -100,4 +100,26 @@ export async function obterExecucaoEtiquetas(id: string) {
 
 export async function cancelarExecucaoEtiquetas(id: string) {
   return request<{ message: string }>(`/api/pje/etiquetas/execucoes/${id}`, { method: 'DELETE' });
+}
+
+/** Baixa a planilha (.xlsx) dos processos afetados pela execução, via fetch com o header x-user. */
+export async function downloadPlanilhaExecucao(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/pje/etiquetas/execucoes/${id}/planilha`, {
+    headers: { 'x-user': JSON.stringify({ id: 1, name: 'Dr. João Magistrado', role: 'magistrado' }) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const fileName = res.headers.get('Content-Disposition')?.match(/filename="?([^"]+)"?/)?.[1]
+    || `processos_parados_${id.slice(0, 8)}.xlsx`;
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(blobUrl);
 }

@@ -8,6 +8,7 @@ import { execucoesStore } from './execucoes-store';
 import type { EtiquetasScheduler } from './etiquetas.scheduler';
 import type { EtiquetasService } from './etiquetas.service';
 import { listarEtiquetasDoPerfil } from './pje-etiquetas-client';
+import { gerarPlanilhaExecucao, nomeArquivoExecucao } from './xlsx-etiquetas';
 import type { ExecutarEtiquetasDTO } from './types';
 
 interface SessaoQuery { pjeSessionId?: string; }
@@ -90,6 +91,21 @@ export function etiquetasRoutes(service: EtiquetasService, scheduler: EtiquetasS
         return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Execução não encontrada.', statusCode: 404 } });
       }
       ok(reply, exec);
+    });
+
+    // Planilha dos processos afetados (parados há mais de N dias), gerada em memória a partir do histórico.
+    fastify.get<{ Params: { id: string } }>('/execucoes/:id/planilha', async (request, reply) => {
+      const exec = execucoesStore.get(request.params.id);
+      if (!exec) {
+        return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Execução não encontrada.', statusCode: 404 } });
+      }
+      if (exec.status === 'running') {
+        return reply.status(409).send({ success: false, error: { code: 'NOT_READY', message: 'A execução ainda está em andamento.', statusCode: 409 } });
+      }
+      const buffer = await gerarPlanilhaExecucao(exec);
+      reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      reply.header('Content-Disposition', `attachment; filename="${nomeArquivoExecucao(exec)}"`);
+      return reply.send(buffer);
     });
 
     fastify.delete<{ Params: { id: string } }>('/execucoes/:id', async (request, reply) => {

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, CalendarClock, FlaskConical, Info, Loader2, ShieldAlert, Tag, Tags,
+  AlertTriangle, CalendarClock, Download, FlaskConical, Info, Loader2, ShieldAlert, Tag, Tags,
 } from 'lucide-react';
 import { ListaEtiquetas } from './ListaEtiquetas';
 import { ListaTarefas, type TarefaSelecionada } from './ListaTarefas';
@@ -10,8 +10,9 @@ import { ProgressoJob } from './ProgressoJob';
 import type { EtiquetaPJE, TarefaPJE } from './types';
 import { safeStr } from './types';
 import {
-  cancelarExecucaoEtiquetas, executarEtiquetagem, obterConfigEtiquetas, obterExecucaoEtiquetas,
-  salvarConfigEtiquetas, type ExecucaoEtiquetas, type MotivoIgnorado, type ProcessoAfetado,
+  cancelarExecucaoEtiquetas, downloadPlanilhaExecucao, executarEtiquetagem, obterConfigEtiquetas,
+  obterExecucaoEtiquetas, salvarConfigEtiquetas,
+  type ExecucaoEtiquetas, type MotivoIgnorado, type ProcessoAfetado,
 } from './api-etiquetas';
 
 const DIAS_PADRAO = 120;
@@ -445,8 +446,35 @@ function ResumoExecucao({ execucao, onAplicar }: { execucao: ExecucaoEtiquetas; 
               </tbody>
             </table>
           </div>
+          <div className="border-t border-slate-100 p-3">
+            <BotaoPlanilhaExecucao execucaoId={execucao.id} total={execucao.processos.length} diasParado={execucao.configSnapshot.diasParado} />
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function BotaoPlanilhaExecucao({ execucaoId, total, diasParado }: { execucaoId: string; total: number; diasParado: number }) {
+  const [baixando, setBaixando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    setBaixando(true);
+    setErro(null);
+    try { await downloadPlanilhaExecucao(execucaoId); }
+    catch (err) { setErro(err instanceof Error ? err.message : 'Erro ao baixar planilha'); }
+    finally { setBaixando(false); }
+  };
+
+  return (
+    <div>
+      <button type="button" onClick={handleDownload} disabled={baixando} className="btn btn-primary w-full py-2.5 text-sm disabled:opacity-60">
+        {baixando
+          ? <><Loader2 size={16} className="animate-spin" /> Gerando planilha…</>
+          : <><Download size={16} /> Baixar planilha dos {total} processo(s) parados há mais de {diasParado} dias</>}
+      </button>
+      {erro && <p className="mt-2 text-center text-xs text-red-600">{erro}</p>}
     </div>
   );
 }
