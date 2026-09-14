@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Download, FileSpreadsheet, Search, Hash, Check } from 'lucide-react';
+import { Download, FileSpreadsheet, Search, Hash, Tags, Check } from 'lucide-react';
 import type { ServicoAtivo } from './types';
 
 interface ServicoItem {
@@ -40,6 +40,13 @@ const SERVICOS: ServicoItem[] = [
     titulo: 'Planilha por Dígito',
     descricao: 'Distribua o acervo entre servidores pelo dígito do processo, com prioridades.',
     accent: 'emerald',
+  },
+  {
+    id: 'etiquetas',
+    icone: <Tags size={22} />,
+    titulo: 'Etiquetar Processos Parados',
+    descricao: 'Aplique uma etiqueta do PJE nos processos sem movimentação há mais de N dias (padrão 120).',
+    accent: 'navy',
   },
 ];
 

@@ -23,6 +23,7 @@ import { ResultadoFinal } from '../../componentes/pje-download/ResultadoFinal';
 import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogados';
 import { TelaPesquisaGeral } from '../../componentes/pje-download/TelaPesquisaGeral';
 import { TelaPlanilhaDigito } from '../../componentes/pje-download/TelaPlanilhaDigito';
+import { TelaEtiquetas } from '../../componentes/pje-download/TelaEtiquetas';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
 import { loginPJE, enviar2FA, selecionarPerfil, validarSessao } from '../../componentes/pje-download/api';
@@ -691,7 +692,17 @@ export default function PaginaDownloadPJE() {
                       />
                     )}
 
-                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && (
+                    {servicoAtivo === 'etiquetas' && sessao.sessionId && (
+                      <TelaEtiquetas
+                        sessionId={sessao.sessionId}
+                        tarefas={sessao.tarefas || []}
+                        etiquetas={sessao.etiquetas || []}
+                        credenciais={credenciais}
+                        perfilIndice={sessao.perfilSelecionado?.indice}
+                      />
+                    )}
+
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && servicoAtivo !== 'etiquetas' && (
                       <DownloadModeSelector
                         modoSelecionado={modo}
                         onSelecionar={(m) => {
@@ -706,7 +717,7 @@ export default function PaginaDownloadPJE() {
                       />
                     )}
 
-                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && (
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && servicoAtivo !== 'etiquetas' && (
                       <div>
                         <div className="mb-3 flex items-center gap-2">
                           <span className="num-badge">3</span>
@@ -776,7 +787,7 @@ export default function PaginaDownloadPJE() {
                       </div>
                     )}
 
-                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && (
+                    {servicoAtivo && servicoAtivo !== 'pesquisa' && servicoAtivo !== 'digito' && servicoAtivo !== 'etiquetas' && (
                       <DownloadAction
                         servico={servicoAtivo}
                         modo={modo}

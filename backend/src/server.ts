@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { registerPJEDownloadModule } from './modules/pje-download';
+import { registerEtiquetasModule } from './modules/etiquetas';
 import { errorHandler } from './middleware/error-handler';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -79,6 +80,7 @@ async function main() {
   }));
 
   await registerPJEDownloadModule(fastify);
+  await registerEtiquetasModule(fastify);
 
   const downloadCleanup = setInterval(() => {
     try {

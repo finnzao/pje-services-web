@@ -2,8 +2,8 @@
 
 > Referência técnica da aplicação de automação do PJE/TJBA: download de autos processuais em lote,
 > geração de planilhas de advogados, pesquisa geral de processos e planilha administrativa por dígito.
-> Atualizado em **08/09/2026** (deploy do PJE de 09/2026, ver [§4.1](#41--login-no-pje-pjeauthproxy) e [§12](#12--segurança-e-pontos-de-atenção));
-> limpeza de código legado descrita na [§13](#13--higiene-de-código-limpeza-de-082026).
+> Atualizado em **14/09/2026** (serviço de etiquetas automáticas, [§10](#10--etiquetas-automáticas-processos-parados)); revisão anterior de 08/09/2026 (deploy do PJE de 09/2026, ver [§4.1](#41--login-no-pje-pjeauthproxy) e [§13](#13--segurança-e-pontos-de-atenção));
+> limpeza de código legado descrita na [§14](#14--higiene-de-código-limpeza-de-082026).
 
 **Stack:** Fastify 5 · Node 20 · Next.js 16 · React 19 · TypeScript strict · pnpm workspace · SSE + File System Access API
 
@@ -20,17 +20,18 @@
 7. [Planilha de advogados](#7--planilha-de-advogados)
 8. [Planilha administrativa por dígito](#8--planilha-administrativa-por-dígito)
 9. [Pesquisa geral](#9--pesquisa-geral)
-10. [Contratos de API](#10--contratos-de-api)
-11. [Constantes e limites](#11--constantes-e-limites-operacionais)
-12. [Segurança e pontos de atenção](#12--segurança-e-pontos-de-atenção)
-13. [Higiene de código (limpeza de 08/2026)](#13--higiene-de-código-limpeza-de-082026)
-14. [Build, execução e deploy](#14--build-execução-e-deploy)
+10. [Etiquetas automáticas (processos parados)](#10--etiquetas-automáticas-processos-parados)
+11. [Contratos de API](#11--contratos-de-api)
+12. [Constantes e limites](#12--constantes-e-limites-operacionais)
+13. [Segurança e pontos de atenção](#13--segurança-e-pontos-de-atenção)
+14. [Higiene de código (limpeza de 08/2026)](#14--higiene-de-código-limpeza-de-082026)
+15. [Build, execução e deploy](#15--build-execução-e-deploy)
 
 ---
 
 ## 1 · Visão geral
 
-O Fórum Hub é uma aplicação interna que automatiza quatro serviços sobre o **PJE do Tribunal de
+O Fórum Hub é uma aplicação interna que automatiza cinco serviços sobre o **PJE do Tribunal de
 Justiça da Bahia (1º grau)**:
 
 - **Download de Processos** — baixa os autos digitais (PDF/ZIP) de todos os processos de uma ou
@@ -46,13 +47,16 @@ Justiça da Bahia (1º grau)**:
 - **Planilha Administrativa por Dígito** — distribui o acervo da unidade entre servidores pelo
   último dígito do sequencial CNJ e entrega a carga de cada um ordenada por prioridade de
   trabalho (metas do BI, tempo morto, antiguidade), em `.xlsx` único ou `.zip` por servidor.
+- **Etiquetas automáticas** — rotina diária (worker in-process) que aplica uma etiqueta já
+  existente no PJE aos processos parados há mais de N dias (padrão 120, pela data da última
+  movimentação), pulando os vinculados a uma lista de tarefas ignoradas.
 
 A decisão de arquitetura central: **o backend não armazena os arquivos do fluxo principal**. Ele
 atua como um proxy de autenticação e scraping que descobre URLs assinadas de download (S3 do PJE)
 e as transmite por **Server-Sent Events**; é o **navegador** que baixa cada PDF (via proxy de
 streaming ou direto do S3) e o grava numa pasta local (File System Access API) ou monta um ZIP —
 com suporte a ZIP64 em streaming para lotes acima de 1 GiB. Não há banco de dados: todo estado
-vive em memória, com um snapshot de sessões em arquivo JSON.
+vive em memória, com snapshots em arquivo JSON (sessões, configuração e histórico das etiquetas).
 
 **Como o PJE é consumido** (não existe API oficial):
 
@@ -75,8 +79,8 @@ Monorepo `pnpm` com dois aplicativos independentes (instalação e deploy separa
 - Raiz: `pnpm dev` sobe API e web juntos via `concurrently`.
 - Identidade visual: Fraunces (display), IBM Plex Sans (texto), IBM Plex Mono (dados), paleta
   *navy/brass* declarada em `@theme` no `globals.css` (Tailwind v4, sem `tailwind.config`).
-- Backend: `tsc` → `dist/`; Vitest em `src/__tests__` (funções puras da planilha por dígito e
-  parser da página de perfis). No Node < 22.12 rode com `NODE_OPTIONS=--experimental-require-module`.
+- Backend: `tsc` → `dist/`; Vitest em `src/__tests__` (funções puras da planilha por dígito,
+  regras do serviço de etiquetas e parser da página de perfis). No Node < 22.12 rode com `NODE_OPTIONS=--experimental-require-module`.
 - Frontend: `next.config.ts` define apenas *rewrites* de `/api/*` → `NEXT_PUBLIC_API_URL`
   (necessário porque `EventSource` não envia headers customizados).
 
@@ -384,7 +388,75 @@ item tem status `pendente → executando → concluido|erro|cancelado`; ao final
 consolidado (`_RELATORIO_PESQUISA_MULTIPLA_{ts}.txt`) é salvo na *raiz* da pasta escolhida,
 separando partes com e sem processos e os itens não executados por cancelamento.
 
-## 10 · Contratos de API
+## 10 · Etiquetas automáticas (processos parados)
+
+Módulo `backend/src/modules/etiquetas/` — o primeiro serviço do Fórum Hub que **escreve** no
+PJE (os demais só leem). Aplica uma etiqueta existente no perfil aos processos parados há mais de
+N dias, respeitando uma blacklist de tarefas.
+
+### 10.1 · Parâmetros (`EtiquetasConfig`, persistida em `.etiquetas-config.json`)
+
+| Campo | Padrão | Regra |
+| --- | --- | --- |
+| `diasParado` | **120** | Etiqueta quem está parado há **mais de** N dias (N exato não entra); 1–3650 |
+| `etiqueta` | `null` | `{id, nome}` escolhida entre as devolvidas por `painelUsuario/etiquetas`; obrigatória para ativar |
+| `tarefasIgnoradas` | `[]` | Blacklist por nome (comparação sem acento/caixa); vínculo com qualquer uma delas veta a etiquetagem |
+| `horaExecucao` | `03:00` | Hora local do servidor, uma execução por dia |
+| `ativo` | `false` | Liga a rotina agendada; a execução manual independe |
+| `removerQuandoMovimentado` | `false` | Se true, remove a etiqueta de quem voltou a movimentar (≤ N dias) |
+| `limitePorExecucao` | 500 | Teto de inserções + remoções por execução (as mais paradas primeiro) |
+| `sessao` | `{}` | `pjeSessionId` vinculado pelo usuário, `cpf` (sessão persistida de 4 h) e `pjeProfileIndex` |
+
+A validação (`validarConfig`) é por patch parcial: `PUT /config` aceita só os campos alterados e
+devolve 400 com a lista de erros. O arquivo em disco é revalidado no boot.
+
+### 10.2 · Pipeline de uma execução (`EtiquetasService`)
+
+1. **Sessão** — ordem: sessão/credenciais da própria chamada (manual) → `pjeSessionId` vinculado →
+   sessão persistida por CPF → login com `ETIQUETAS_PJE_CPF/SENHA` (falha se houver 2FA). Cada
+   candidata passa por `usuario/currentUser` antes de ser usada.
+2. **Reconciliação da etiqueta** — a tag configurada precisa existir no perfil (`painelUsuario/etiquetas`,
+   500/página). Sem isso o `inserir` criaria uma tag nova por nome; renomes no PJE são absorvidos e
+   gravados de volta na configuração.
+3. **Listagem** — `painelUsuario/tarefas` separa tarefas consideradas e ignoradas. O acervo das
+   consideradas é lido com `listarProcessosDaTarefa` (dedup por `idProcesso`, tarefas extras em
+   `outrasTarefas`); as ignoradas também são listadas, só para montar o conjunto de ids vetados
+   (um processo em duas tarefas, uma delas ignorada, fica de fora).
+4. **Última movimentação** — vem da própria linha do painel (`ultimoMovimento`); fallback
+   `GET processos/{id}/ultimoMovimento` com 4 workers e stagger 250 ms. **Sem data, o processo não
+   é decidido** (não usa `dataChegada` — a regra é explicitamente pela última movimentação).
+5. **Plano** (`planejarAcoes`, puro) — por processo: tarefa ignorada → `TAREFA_IGNORADA`; sem data
+   → `SEM_DATA_MOVIMENTO`; > N dias → inserir (ou `JA_ETIQUETADO`, idempotente); ≤ N dias →
+   remover se `removerQuandoMovimentado`, senão `DENTRO_DO_PRAZO`. Corte pelo teto vira
+   `LIMITE_EXECUCAO`.
+6. **Aplicação** — `POST painelUsuario/processoTags/inserir` `{tag: nomeTag, idProcesso: "id"}`
+   (resposta `{id, nomeTag, idProcessoTag, …}`) e `POST …/processoTags/remover` `{idTag, idProcesso}`
+   (resposta = `idTag`), 2 workers, stagger 300 ms. `dryRun` percorre tudo e registra
+   `simulada_*` sem chamar o PJE.
+7. **Histórico** — cada execução (`ExecucaoEtiquetas`: origem, dry-run, etapa, totais por motivo,
+   processos afetados, snapshot da configuração) fica em `.etiquetas-execucoes.json` (30 mais
+   recentes, 2 000 processos por execução). Execução `running` encontrada no boot vira `failed`.
+
+Uma execução por vez: nova chamada durante outra recebe 409; `DELETE /execucoes/:id` cancela.
+
+**Frontend:** card "Etiquetar Processos Parados" no `ServiceSelector` abre `TelaEtiquetas`
+(`api-etiquetas.ts`): dias parados (padrão 120, mesmo critério da planilha por dígito), etiqueta
+única entre as do perfil (`sessao.etiquetas`), tarefas ignoradas (`ListaTarefas`) e a opção de
+remoção. Cada disparo grava esses parâmetros via `PUT /config` (é a configuração que a rotina
+automática usará) e chama `POST /executar`; a UI oferece **Simular** (dry-run) e **Etiquetar** com
+confirmação inline, faz polling de `GET /execucoes/:id` a cada 2,5 s e mostra totais, motivos de
+exclusão e a tabela de processos afetados.
+
+### 10.3 · Agendador (`EtiquetasScheduler`)
+
+Worker in-process sem dependência externa: tick a cada 60 s; dispara quando `ativo`, há etiqueta,
+o horário do dia já passou e ainda não houve execução agendada hoje (`deveExecutarAgora` —
+tolerante a ticks perdidos, dispara no primeiro tick após o horário). Enquanto a rotina está ativa
+um keep-alive a cada 4 min renova o TTL deslizante do `pjeSessionId` vinculado (a manutenção do
+`sessionStore` faz o ping no PJE); se a sessão morrer, o vínculo é limpo e a execução cai nos
+fallbacks. `ETIQUETAS_SCHEDULER=off` desliga o worker (instância secundária, testes).
+
+## 11 · Contratos de API
 
 ### Autenticação — `/api/pje/downloads/auth`
 
@@ -437,7 +509,21 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | `DELETE /:jobId` | Cancela |
 | `GET /:jobId/download` | `.xlsx` ou `.zip`, resolvido **pelo jobId** (nome do arquivo carrega o jobId) |
 
-## 11 · Constantes e limites operacionais
+### Etiquetas automáticas — `/api/pje/etiquetas` (exige `x-user`)
+
+| Rota | Descrição |
+| --- | --- |
+| `GET /config` | Configuração vigente (`EtiquetasConfig`) |
+| `PUT /config` | Patch parcial validado; 400 `CONFIG_INVALIDA` com `details[]`; ativar exige etiqueta |
+| `GET /status` | `{ativo, horaExecucao, proximaExecucao, emExecucao, execucaoAtualId, ultimaExecucao, sessaoVinculada, sessaoValida}` |
+| `GET /disponiveis?pjeSessionId` | Etiquetas do perfil da sessão (`{id, nomeTag, nomeTagCompleto, favorita}`) para escolher qual aplicar |
+| `GET /tarefas?pjeSessionId` | Nomes das tarefas do painel, para montar `tarefasIgnoradas` |
+| `POST /executar` | `{dryRun?, pjeSessionId?, credentials?, pjeProfileIndex?}` → 202 `{execucaoId}`; 409 se já há execução; 401 `SESSAO_PJE_INDISPONIVEL` |
+| `GET /execucoes` | Histórico (30 mais recentes, sem a lista de processos) |
+| `GET /execucoes/:id` | Execução completa: `{status, etapa, progresso, mensagem, totais{…, ignorados{motivo: n}}, processos[], configSnapshot}` |
+| `DELETE /execucoes/:id` | Cancela a execução em andamento |
+
+## 12 · Constantes e limites operacionais
 
 | Parâmetro | Valor | Onde |
 | --- | --- | --- |
@@ -450,6 +536,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Pesquisa geral | 20/página · máx. 1 000 resultados | consulta-publica |
 | Captura de partes/advogados nos autos | 4 workers · stagger 250 ms | pje-advogados.service |
 | Último movimento (planilha por dígito) | 4 workers · stagger 250 ms | planilha-digito.service |
+| Etiquetas automáticas | último movimento 4 workers · 250 ms; inserir/remover 2 workers · 300 ms; teto 500 ações/execução; tick 60 s; keep-alive 4 min; histórico 30 execuções × 2 000 processos | etiquetas.service / scheduler |
 | Motor de peso (blocos A–F) | A≤40 · B≤20 · C≤25 · D≤15 · E≤10 · F 1,0/0,3 · réguas 100/120 dias · faixas 70/50/30 · meta a um passo ≤ 2 | digito-core (`CONFIG_PESO_PADRAO`) |
 | TTL do progressMap (planilha por dígito) | jobs terminais > 1 h, varridos a cada 30 min | planilha-digito.service |
 | TTL sessão / sessão por CPF | 30 min (deslizante) / 4 h | session-store |
@@ -459,7 +546,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 | Polling do job de advogados (UI) | 2,5 s | page.tsx |
 | Heartbeat SSE / retry | 15 s / 60 s | stream.controller |
 
-## 12 · Segurança e pontos de atenção
+## 13 · Segurança e pontos de atenção
 
 - **Identidade de aplicação simbólica:** o header `x-user` é um JSON fixo no cliente; qualquer
   chamador pode assumir o papel `magistrado`. Em produção só o CORS restringe a origem.
@@ -467,6 +554,10 @@ separando partes com e sem processos e os itens não executados por cancelamento
   diferente do `randomUUID` usado nos tokens de proxy; trafega em query string.
 - **Sem persistência real:** o progresso dos jobs de advogados some no restart e o `progressMap`
   não tem TTL (cresce até o restart); sessões sobrevivem apenas via `.pje-sessions.json`.
+- **Etiquetas escrevem no PJE:** a rotina agendada mantém viva a sessão PJE vinculada enquanto
+  está ativa (keep-alive) e age em nome desse usuário; o teto por execução, o `dryRun` e o
+  histórico com snapshot da configuração são as salvaguardas. Credenciais em variáveis de
+  ambiente são fallback opcional — prefira vincular uma sessão.
 - **Acoplamento ao TJBA/1º grau:** hosts, `pje-tjba-1g`, `ramoJustica='8'`,
   `sistemaOrigem=PRIMEIRA_INSTANCIA` e ids JSF literais da Consulta Pública (`j_id459`,
   `j_id507/508`) — qualquer atualização visual do PJE pode quebrar parsers. O deploy de
@@ -484,7 +575,7 @@ separando partes com e sem processos e os itens não executados por cancelamento
 - **Erros silenciosos:** `ParallelPool` engole exceções das tarefas; vários `catch {}` em pontos
   de rede (decisão consciente de resiliência, mas dificulta diagnóstico).
 
-## 13 · Higiene de código (limpeza de 08/2026)
+## 14 · Higiene de código (limpeza de 08/2026)
 
 Até agosto/2026 conviviam duas gerações no repositório: o fluxo SSE atual e um modelo anterior de
 **jobs assíncronos com download no servidor**, além de módulos órfãos acumulados por
@@ -528,9 +619,9 @@ refatorações. Essa dívida foi **removida** nesta limpeza:
 
 **Ainda em aberto (não bloqueante):** `formatFileSize` em `types.ts` coexiste com `formatBytes`
 (formatações ligeiramente diferentes); o endpoint `GET /document-types` segue no ar sem consumidor;
-e as pequenas divergências da §12.
+e as pequenas divergências da §13.
 
-## 14 · Build, execução e deploy
+## 15 · Build, execução e deploy
 
 ### Desenvolvimento
 
@@ -551,6 +642,9 @@ cd frontend && pnpm dev   # exige frontend/.env.local com NEXT_PUBLIC_API_URL=ht
 | --- | --- | --- | --- |
 | `PORT` | backend | 10000 | Porta da API (Docker/Render usam 3001) |
 | `NODE_ENV` | backend | development | CORS restrito, logs JSON, exige `x-user` |
+| `ETIQUETAS_SCHEDULER` | backend | on | `off` desliga o worker de etiquetas (rotas continuam) |
+| `ETIQUETAS_PJE_CPF` / `ETIQUETAS_PJE_SENHA` / `ETIQUETAS_PJE_PERFIL` | backend | — | Login de fallback da rotina agendada quando não há sessão vinculada (inviável com 2FA) |
+| `ETIQUETAS_CONFIG_FILE` / `ETIQUETAS_HISTORICO_FILE` | backend | `.etiquetas-config.json` / `.etiquetas-execucoes.json` no cwd | Caminho dos snapshots do serviço de etiquetas |
 | `NEXT_PUBLIC_API_URL` | frontend | — | Destino do rewrite `/api/*` e base do SSE |
 | `NEXT_PUBLIC_ZIP_SW_URL` | frontend | `/zip-sw.js` | Service worker do ZIP streaming |
 | `NEXT_PUBLIC_PJE_DEBUG` | frontend | false | Logs detalhados no console |
@@ -567,4 +661,4 @@ cd frontend && pnpm dev   # exige frontend/.env.local com NEXT_PUBLIC_API_URL=ht
 
 ---
 
-*Documento gerado a partir da leitura integral do código (branch `main`, 26/08/2026); revisado em 08/09/2026.*
+*Documento gerado a partir da leitura integral do código (branch `main`, 26/08/2026); revisado em 08/09/2026 e 14/09/2026.*

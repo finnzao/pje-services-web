@@ -4,3 +4,5 @@ dist
 downloads/
 
 .pje-sessions.json
+.etiquetas-config.json
+.etiquetas-execucoes.json

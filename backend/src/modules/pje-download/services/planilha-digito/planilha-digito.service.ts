@@ -4,14 +4,20 @@ import type {
 } from '../../../../shared/types';
 import { pjeApiGet, pjeApiPost, type PjeSession } from '../../../../shared/pje-api-client';
 import { resolveSessionFromDto } from '../pje-auth';
-import { listarProcessosDaTarefa } from '../download/painel-listing';
+import {
+  extrairDataMovimento, lerData, lerEtiquetas, lerString, listarProcessosDaTarefa,
+} from '../download/painel-listing';
 import {
   CONFIG_PESO_PADRAO, FLAGS,
   avaliarProcesso, calcularDiasParados, distribuirPorServidor, extrairDigito,
-  metasDoProcesso, montarMapaAtribuicoes, ordenarPorPrioridade, parseDataPje,
+  metasDoProcesso, montarMapaAtribuicoes, ordenarPorPrioridade,
   selecionarTarefas,
 } from './digito-core';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
+
+// Parsers de linha do painel e extrairDataMovimento vivem em download/painel-listing
+// (compartilhados com o módulo de etiquetas); re-exportado para manter a suíte de testes.
+export { extrairDataMovimento };
 
 const ENRICH_CONCURRENCY = 4;
 const STAGGER_MS = 250;
@@ -21,23 +27,6 @@ const JOB_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Extrai a data do payload de processos/{id}/ultimoMovimento sem depender do formato exato. */
-export function extrairDataMovimento(payload: unknown): string | undefined {
-  const candidato = Array.isArray(payload) ? payload[0] : payload;
-  const direto = parseDataPje(candidato);
-  if (direto) return direto;
-  if (candidato && typeof candidato === 'object') {
-    const obj = candidato as Record<string, unknown>;
-    for (const chave of ['dataMovimento', 'data', 'dataHora', 'dataUltimoMovimento', 'ultimoMovimento', 'dataCriacao']) {
-      const parsed = parseDataPje(obj[chave]);
-      if (parsed) return parsed;
-    }
-    const movimento = obj['movimento'];
-    if (movimento && typeof movimento === 'object') return extrairDataMovimento(movimento);
-  }
-  return undefined;
 }
 
 interface RegistroBruto {
@@ -51,35 +40,6 @@ interface RegistroBruto {
   dataChegada?: string;
   /** Presente quando a própria listagem do painel já trouxe a última movimentação. */
   ultimoMovimento?: string;
-}
-
-function lerString(obj: Record<string, unknown>, chave: string): string | undefined {
-  const v = obj[chave];
-  return typeof v === 'string' && v.trim() ? v : undefined;
-}
-
-/** Primeira data parseável entre as chaves informadas (aceita epoch, ISO ou dd/MM/yyyy). */
-function lerData(obj: Record<string, unknown>, ...chaves: string[]): string | undefined {
-  for (const chave of chaves) {
-    const parsed = parseDataPje(obj[chave]);
-    if (parsed) return parsed;
-  }
-  return undefined;
-}
-
-function lerEtiquetas(row: Record<string, unknown>): string[] {
-  const lista = row['tagsProcessoList'];
-  if (Array.isArray(lista)) {
-    const nomes = lista
-      .map((t) => (t && typeof t === 'object' ? (t as Record<string, unknown>)['nomeTag'] : undefined))
-      .filter((n): n is string => typeof n === 'string' && n.trim().length > 0);
-    if (nomes.length > 0) return nomes;
-  }
-  const tagsList = row['tagsList'];
-  if (Array.isArray(tagsList)) {
-    return tagsList.filter((n): n is string => typeof n === 'string' && n.trim().length > 0);
-  }
-  return [];
 }
 
 export class PlanilhaDigitoService {
