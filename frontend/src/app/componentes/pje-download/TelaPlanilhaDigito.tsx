@@ -2,10 +2,15 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FileSpreadsheet, FileArchive, Hash, Info, Loader2, Tags, AlertTriangle,
+  FileSpreadsheet, FileArchive, Hash, Info, Loader2, Tags, AlertTriangle, RotateCcw, SlidersHorizontal,
 } from 'lucide-react';
+import { BarraStatusFixa } from './BarraStatusFixa';
 import { ListaTarefas, type TarefaSelecionada } from './ListaTarefas';
 import { ProgressoJob } from './ProgressoJob';
+import { notificar } from './Toast';
+import {
+  normalizarStatus, notificarNavegador, pedirPermissaoNotificacao, rolarAte, useRolarNoProgresso, useTituloAba,
+} from './feedback';
 import type { TarefaPJE } from './types';
 import {
   gerarPlanilhaDigito, obterProgressoDigito, cancelarPlanilhaDigito, downloadPlanilhaDigito,
@@ -14,6 +19,7 @@ import {
 
 const DIGITOS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 const POLL_INTERVAL_MS = 2500;
+const TERMINAIS = ['completed', 'failed', 'cancelled'];
 
 interface TelaPlanilhaDigitoProps {
   sessionId: string;
@@ -30,12 +36,36 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
   const [iniciando, setIniciando] = useState(false);
   const [job, setJob] = useState<PlanilhaDigitoProgress | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressoRef = useRef<HTMLDivElement | null>(null);
+  const statusAnterior = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
   useEffect(() => stopPolling, [stopPolling]);
+
+  const statusUi = normalizarStatus(job?.status);
+  const jobAtivo = statusUi === 'running';
+  useTituloAba(statusUi, job?.progress, 'Planilha por dígito');
+  useRolarNoProgresso(progressoRef, statusUi);
+
+  useEffect(() => {
+    const atual = job?.status ?? null;
+    const antes = statusAnterior.current;
+    statusAnterior.current = atual;
+    if (!job || !atual || !TERMINAIS.includes(atual) || antes === null || TERMINAIS.includes(antes)) return;
+    if (atual === 'completed') {
+      const titulo = `Planilha por dígito pronta: ${job.totalProcesses} processo(s)`;
+      notificar({ tom: 'sucesso', titulo, acao: { rotulo: 'Ver resultado', onClick: () => rolarAte(progressoRef.current) } });
+      notificarNavegador('Fórum Hub — Planilha por dígito', titulo);
+    } else if (atual === 'failed') {
+      notificar({ tom: 'erro', titulo: 'A geração da planilha falhou', descricao: job.message, acao: { rotulo: 'Ver detalhes', onClick: () => rolarAte(progressoRef.current) } });
+      notificarNavegador('Fórum Hub — Planilha por dígito', 'A geração falhou.');
+    } else {
+      notificar({ tom: 'info', titulo: 'Geração cancelada' });
+    }
+  }, [job]);
 
   const servidoresConhecidos = useMemo(
     () => [...new Set(Object.values(atribuicoes).map((s) => s.trim()).filter(Boolean))],
@@ -68,7 +98,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
       try {
         const p = await obterProgressoDigito(jobId);
         setJob({ ...p, jobId });
-        if (['completed', 'failed', 'cancelled'].includes(p.status)) stopPolling();
+        if (TERMINAIS.includes(p.status)) stopPolling();
       } catch { /* falha transitória de rede: a próxima rodada tenta de novo */ }
     }, POLL_INTERVAL_MS);
   }, [stopPolling]);
@@ -77,6 +107,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
     setErro(null);
     setIniciando(true);
     setJob(null);
+    pedirPermissaoNotificacao();
     try {
       const result = await gerarPlanilhaDigito({
         credentials: credenciais ?? undefined,
@@ -105,19 +136,40 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
     try { await cancelarPlanilhaDigito(job.jobId); } catch { /* progresso reflete o estado real */ }
   }, [job]);
 
-  const jobAtivo = job && !['completed', 'failed', 'cancelled'].includes(job.status);
+  const voltarAoFormulario = useCallback(() => {
+    stopPolling();
+    setJob(null);
+    statusAnterior.current = null;
+  }, [stopPolling]);
 
   return (
     <div className="space-y-8">
       {erro && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700" role="alert">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" aria-hidden />
           <span>{erro}</span>
         </div>
       )}
 
+      {/* ───── Vista de execução/resultado ───── */}
       {job && (
-        <div>
+        <div ref={progressoRef} className="scroll-mt-24 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="num-badge">{jobAtivo ? '⏳' : '✓'}</span>
+              <span className="eyebrow">Planilha por dígito · {servidoresConhecidos.length} servidor(es) · {formato === 'zip' ? 'zip por servidor' : 'arquivo único'}</span>
+            </div>
+            {!jobAtivo && (
+              <div className="flex gap-2">
+                <button type="button" onClick={voltarAoFormulario} className="btn btn-ghost px-3 py-1.5 text-xs">
+                  <SlidersHorizontal size={13} /> Ajustar parâmetros
+                </button>
+                <button type="button" onClick={voltarAoFormulario} className="btn btn-ghost px-3 py-1.5 text-xs">
+                  <RotateCcw size={13} /> Nova planilha
+                </button>
+              </div>
+            )}
+          </div>
           <ProgressoJob
             status={job.status}
             progress={job.progress}
@@ -131,7 +183,8 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
         </div>
       )}
 
-      {!jobAtivo && (
+      {/* ───── Formulário ───── */}
+      {!job && (
         <>
           <div>
             <div className="mb-3 flex items-center gap-2">
@@ -139,7 +192,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
               <span className="eyebrow">Atribua os dígitos aos servidores</span>
             </div>
             <div className="mb-4 flex items-start gap-2 rounded-xl bg-navy-50 px-3.5 py-2.5 text-xs text-navy-700">
-              <Info size={14} className="mt-0.5 flex-shrink-0" />
+              <Info size={14} className="mt-0.5 flex-shrink-0" aria-hidden />
               <span>
                 O dígito é o <strong>último algarismo do sequencial</strong> do número CNJ
                 (ex.: 800173<strong>2</strong>-90.2023… → dígito 2). Um servidor pode acumular
@@ -152,16 +205,17 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {DIGITOS.map((d) => (
                 <label key={d} className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2 focus-within:border-navy-400">
-                  <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-navy-50 text-sm font-bold text-navy-700">
+                  <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-navy-50 text-sm font-bold text-navy-700" aria-hidden>
                     {d}
                   </span>
+                  <span className="sr-only">Servidor do dígito {d}</span>
                   <input
                     type="text"
                     list="servidores-digito"
                     value={atribuicoes[d] || ''}
                     onChange={(e) => setServidor(d, e.target.value)}
                     placeholder="Sem servidor (não atribuído)"
-                    className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-slate-300"
+                    className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-slate-400"
                   />
                 </label>
               ))}
@@ -177,7 +231,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
                   );
                 })}
                 {digitosSemServidor.length > 0 && (
-                  <span className="chip bg-slate-100 text-slate-500">
+                  <span className="chip bg-slate-100 text-slate-600">
                     Sem servidor: {digitosSemServidor.join(', ')}
                   </span>
                 )}
@@ -191,7 +245,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
               <span className="eyebrow">Tarefas ignoradas (opcional)</span>
             </div>
             <div className="mb-4 flex items-start gap-2 rounded-xl bg-brass-50 px-3.5 py-2.5 text-xs text-brass-600">
-              <Info size={14} className="mt-0.5 flex-shrink-0" />
+              <Info size={14} className="mt-0.5 flex-shrink-0" aria-hidden />
               <span>
                 As tarefas selecionadas aqui ficam <strong>fora</strong> da análise — o acervo
                 considerado são todas as demais tarefas do painel deste perfil.
@@ -204,7 +258,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
               onToggle={toggleIgnorada}
             />
             {ignoradas.length > 0 && (
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-slate-600">
                 {ignoradas.length} tarefa(s) ignorada(s): {ignoradas.map((t) => t.nome).join(' · ')}
               </p>
             )}
@@ -215,20 +269,20 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
               <span className="num-badge">4</span>
               <span className="eyebrow">Formato de saída</span>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="group" aria-label="Formato de saída">
               <FormatoBtn
                 ativo={formato === 'xlsx'}
                 onClick={() => setFormato('xlsx')}
                 icone={<FileSpreadsheet size={18} />}
                 titulo="Arquivo único (.xlsx)"
-                descricao="Uma aba por servidor no mesmo arquivo."
+                descricao="Aba Resumo + uma aba por servidor no mesmo arquivo."
               />
               <FormatoBtn
                 ativo={formato === 'zip'}
                 onClick={() => setFormato('zip')}
                 icone={<FileArchive size={18} />}
                 titulo="Um arquivo por servidor (.zip)"
-                descricao="Cada planilha nomeada com o nome do servidor."
+                descricao="Resumo.xlsx + cada planilha nomeada com o servidor."
               />
             </div>
           </div>
@@ -237,19 +291,27 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
             type="button"
             onClick={handleGerar}
             disabled={iniciando || atribuicoesValidas.length === 0}
-            className="btn btn-emerald w-full py-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn btn-emerald w-full py-3 text-sm"
           >
             {iniciando
               ? <><Loader2 size={16} className="animate-spin" /> Iniciando…</>
               : <><Hash size={16} /> Gerar planilha por dígito</>}
           </button>
           {atribuicoesValidas.length === 0 && (
-            <p className="-mt-4 text-center text-xs text-slate-400">
+            <p className="-mt-4 text-center text-xs text-slate-600">
               Atribua ao menos um dígito a um servidor para gerar.
             </p>
           )}
         </>
       )}
+
+      <BarraStatusFixa
+        visivel={jobAtivo}
+        mensagem={job?.message ?? ''}
+        progresso={job?.progress ?? 0}
+        onVer={() => rolarAte(progressoRef.current)}
+        onCancelar={jobAtivo && job?.status !== 'cancelling' ? handleCancelar : undefined}
+      />
     </div>
   );
 }
@@ -258,12 +320,12 @@ function FormatoBtn({ ativo, onClick, icone, titulo, descricao }: {
   ativo: boolean; onClick: () => void; icone: React.ReactNode; titulo: string; descricao: string;
 }) {
   return (
-    <button type="button" onClick={onClick} className={`pick p-4 text-left ${ativo ? 'pick-on' : ''}`}>
-      <span className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg ${ativo ? 'bg-emerald-700 text-white' : 'bg-emerald-50 text-emerald-700'}`}>
+    <button type="button" onClick={onClick} aria-pressed={ativo} className={`pick p-4 text-left ${ativo ? 'pick-on' : ''}`}>
+      <span className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg ${ativo ? 'bg-emerald-700 text-white' : 'bg-emerald-50 text-emerald-700'}`} aria-hidden>
         {icone}
       </span>
       <h4 className="text-sm font-semibold text-ink">{titulo}</h4>
-      <p className="mt-0.5 text-xs text-slate-500">{descricao}</p>
+      <p className="mt-0.5 text-xs text-slate-600">{descricao}</p>
     </button>
   );
 }
@@ -271,9 +333,9 @@ function FormatoBtn({ ativo, onClick, icone, titulo, descricao }: {
 function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
   const pendencias = resumo.naoAtribuidos.total > 0 || resumo.semEtiquetaServidor > 0 || resumo.etiquetaDivergente > 0;
   return (
-    <div className="mt-4 space-y-3">
+    <div className="space-y-3">
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Distribuição</p>
+        <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-slate-600">Distribuição</p>
         <div className="flex flex-wrap gap-1.5">
           {resumo.porServidor.map((s) => (
             <span key={s.servidor} className="chip bg-navy-50 text-navy-700">
@@ -309,7 +371,7 @@ function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
 
       {pendencias && (
         <div className="flex items-start gap-2.5 rounded-2xl border border-brass-200 bg-brass-50/60 p-4 text-sm text-slate-700">
-          <Tags size={16} className="mt-0.5 flex-shrink-0 text-brass-500" />
+          <Tags size={16} className="mt-0.5 flex-shrink-0 text-brass-500" aria-hidden />
           <div className="space-y-1.5 text-xs leading-relaxed">
             <p className="font-semibold text-ink">Pendências de etiquetagem encontradas</p>
             {resumo.naoAtribuidos.digitosSemServidor.length > 0 && (
@@ -324,9 +386,9 @@ function ResumoDistribuicao({ resumo }: { resumo: PlanilhaDigitoResumo }) {
             {resumo.malformados > 0 && (
               <p>• <strong>{resumo.malformados}</strong> processo(s) com número fora do padrão CNJ.</p>
             )}
-            <p className="pt-1 text-slate-500">
-              A etiquetagem em lote direto pelo Fórum Hub (aplicar a etiqueta do servidor nesses
-              processos) será habilitada na próxima etapa desta funcionalidade.
+            <p className="pt-1 text-slate-600">
+              A etiquetagem em lote pelo Fórum Hub está disponível no serviço &quot;Etiquetar Processos
+              Parados&quot; (grupo &quot;Alterar no PJE&quot;), sempre com simulação antes de aplicar.
             </p>
           </div>
         </div>

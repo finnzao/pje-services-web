@@ -87,7 +87,7 @@ function Stat({ valor, rotulo, tone }: { valor: React.ReactNode; rotulo: string;
   return (
     <div className={`rounded-xl border bg-white p-3 text-center ${map[tone]}`}>
       <div className="text-xl font-bold leading-none">{valor}</div>
-      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide opacity-70">{rotulo}</div>
+      <div className="mt-1 text-xs font-medium uppercase tracking-wide opacity-70">{rotulo}</div>
     </div>
   );
 }

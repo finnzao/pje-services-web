@@ -16,7 +16,7 @@ export function ProfileBadge({ perfil, className = '' }: ProfileBadgeProps) {
         <Building2 size={15} />
       </span>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Perfil ativo</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Perfil ativo</p>
         <p className="truncate text-sm font-semibold text-ink" title={perfil.nome}>{perfil.nome}</p>
       </div>
     </div>

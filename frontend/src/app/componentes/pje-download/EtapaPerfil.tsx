@@ -54,7 +54,7 @@ export function EtapaPerfil({ usuario, perfis, carregando, erro, onSelecionar }:
                   <span className="mt-0.5 block truncate text-xs text-slate-500">{perfil.orgao || 'Órgão não informado'}</span>
                 </span>
                 {carregando
-                  ? <Loader2 size={16} className="animate-spin text-slate-400" />
+                  ? <Loader2 size={16} className="animate-spin text-slate-500" />
                   : <ChevronRight size={16} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-navy-500" />}
               </button>
             ))}

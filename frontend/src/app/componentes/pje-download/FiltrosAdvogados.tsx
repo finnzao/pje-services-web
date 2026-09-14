@@ -29,7 +29,7 @@ export function FiltrosAdvogados({ filtros, onChange }: FiltrosAdvogadosProps) {
     <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/50 p-4">
       <div className="mb-2 flex items-center gap-2">
         <Search size={14} className="text-emerald-700" />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Filtros por advogado (opcional)</span>
+        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Filtros por advogado (opcional)</span>
       </div>
 
       <div className="mb-3 flex items-start gap-2 rounded-xl border border-emerald-200/70 bg-white/60 px-3 py-2.5 text-xs text-emerald-800">
@@ -70,7 +70,7 @@ export function FiltrosAdvogados({ filtros, onChange }: FiltrosAdvogadosProps) {
             <span key={`${f.tipo}-${f.valor}-${i}`} className="chip border border-emerald-300 bg-white text-slate-700">
               <span className="font-bold text-emerald-700">{f.tipo === 'oab' ? 'OAB' : 'Adv'}:</span>
               {f.valor}
-              <button type="button" onClick={() => onChange(filtros.filter((_, idx) => idx !== i))} className="ml-0.5 text-slate-400 hover:text-red-600" title="Remover">
+              <button type="button" onClick={() => onChange(filtros.filter((_, idx) => idx !== i))} className="ml-0.5 text-slate-500 hover:text-red-600" title="Remover">
                 <X size={12} />
               </button>
             </span>

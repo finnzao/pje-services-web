@@ -81,7 +81,7 @@ export function ListaProcessos({ valor, onChange, desabilitado }: ListaProcessos
         {invalidos.length > 0 && (
           <span className="inline-flex items-center gap-1 text-red-600"><AlertCircle size={12} /> <strong>{invalidos.length}</strong> inválido(s)</span>
         )}
-        {entries.length === 0 && <span className="text-slate-400">Cole pelo menos um número.</span>}
+        {entries.length === 0 && <span className="text-slate-500">Cole pelo menos um número.</span>}
 
         <div className="ml-auto flex items-center gap-2">
           {entries.length > 0 && (

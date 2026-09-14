@@ -24,6 +24,8 @@ import { FiltrosAdvogados } from '../../componentes/pje-download/FiltrosAdvogado
 import { TelaPesquisaGeral } from '../../componentes/pje-download/TelaPesquisaGeral';
 import { TelaPlanilhaDigito } from '../../componentes/pje-download/TelaPlanilhaDigito';
 import { TelaEtiquetas } from '../../componentes/pje-download/TelaEtiquetas';
+import { ToastHost, notificar } from '../../componentes/pje-download/Toast';
+import { notificarNavegador, rolarAte, useTituloAba, type StatusExecucaoUi } from '../../componentes/pje-download/feedback';
 
 import { API_BASE, ApiError } from '../../lib/api-client';
 import { loginPJE, enviar2FA, selecionarPerfil, validarSessao } from '../../componentes/pje-download/api';
@@ -191,6 +193,24 @@ export default function PaginaDownloadPJE() {
   const isDownloadActive = downloadProgress && !['done', 'error', 'cancelled'].includes(downloadProgress.phase);
   const isAdvogadosActive = jobAdvogados && !['completed', 'failed', 'cancelled'].includes(jobAdvogados.status);
   const isAnyTaskActive = !!(isDownloadActive || isAdvogadosActive);
+
+  // Feedback fora do fluxo de rolagem: título da aba, toast e notificação ao concluir.
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const statusUi: StatusExecucaoUi = isAnyTaskActive
+    ? 'running'
+    : resultado
+      ? (resultado.status === 'failed' ? 'failed' : resultado.status === 'cancelled' ? 'cancelled' : 'completed')
+      : 'idle';
+  const progressoUi = isAdvogadosActive ? jobAdvogados?.progress : isDownloadActive ? execucao.downloadProgress : undefined;
+  useTituloAba(statusUi, progressoUi, resultado?.tipoServico === 'advogados' || servicoAtivo === 'advogados' ? 'Informações completas' : 'Download');
+  useEffect(() => {
+    if (!resultado) return;
+    const tom = resultado.status === 'failed' ? 'erro' : resultado.status === 'cancelled' ? 'info' : 'sucesso';
+    notificar({ tom, titulo: resultado.titulo, descricao: resultado.mensagem, acao: { rotulo: 'Ver resultado', onClick: () => rolarAte(surfaceRef.current) } });
+    notificarNavegador('Fórum Hub', resultado.titulo);
+    const t = setTimeout(() => rolarAte(surfaceRef.current), 50);
+    return () => clearTimeout(t);
+  }, [resultado]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -524,7 +544,7 @@ export default function PaginaDownloadPJE() {
               <h1 className="font-display text-xl font-semibold tracking-tight text-white">
                 Fórum <span className="text-brass-300">Hub</span>
               </h1>
-              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-navy-200">PJE · TJBA</p>
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-navy-200">PJE · TJBA</p>
             </div>
           </div>
 
@@ -594,7 +614,7 @@ export default function PaginaDownloadPJE() {
         )}
 
         {!restaurando && mostrandoDownload && (
-          <div className="surface p-6 sm:p-7 animate-rise">
+          <div ref={surfaceRef} className="surface scroll-mt-24 p-6 sm:p-7 animate-rise">
             {sessao.perfilSelecionado && !mostrandoResultado && (
               <div className="mb-6 border-b border-slate-100 pb-4">
                 <ProfileBadge perfil={sessao.perfilSelecionado} />
@@ -641,8 +661,8 @@ export default function PaginaDownloadPJE() {
                             {f.status === 'error' && <X size={11} className="text-red-500" />}
                             {f.status === 'not_available' && <AlertCircle size={11} className="text-brass-500" />}
                             <span className={`truncate ${f.status === 'error' ? 'text-red-600' : f.status === 'not_available' ? 'text-brass-600' : 'text-slate-600'}`}>{f.name}</span>
-                            {f.size > 0 && <span className="shrink-0 text-slate-400">{formatBytes(f.size)}</span>}
-                            {f.status === 'not_available' && <span className="shrink-0 text-[10px] text-brass-500">não disp.</span>}
+                            {f.size > 0 && <span className="shrink-0 text-slate-500">{formatBytes(f.size)}</span>}
+                            {f.status === 'not_available' && <span className="shrink-0 text-xs text-brass-500">não disp.</span>}
                           </div>
                         ))}
                       </div>
@@ -754,7 +774,7 @@ export default function PaginaDownloadPJE() {
                         )}
 
                         {((modo === 'by_task' && tarefasSelecionadas.length > 1) || (modo === 'by_tag' && etiquetasSelecionadas.length > 1)) && (
-                          <p className="mt-2 text-xs text-slate-400">
+                          <p className="mt-2 text-xs text-slate-500">
                             Processo que aparecer em mais de uma {modo === 'by_task' ? 'tarefa' : 'etiqueta'} é processado uma única vez.
                           </p>
                         )}
@@ -809,8 +829,10 @@ export default function PaginaDownloadPJE() {
         )}
       </main>
 
+      <ToastHost />
+
       <footer className="border-t border-slate-200/70 py-6">
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-500">
           Sistema interno de apoio ao PJE/TJBA · {new Date().getFullYear()}
         </p>
       </footer>

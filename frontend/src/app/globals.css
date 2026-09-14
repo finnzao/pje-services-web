@@ -33,7 +33,8 @@
   html { scroll-behavior: smooth; }
   body { color: var(--color-ink); -webkit-font-smoothing: antialiased; }
   ::selection { background: color-mix(in oklab, var(--color-navy-800) 16%, transparent); }
-  :focus-visible { outline: none; }
+  /* Anel de foco visível para navegação por teclado (WCAG 2.4.7). */
+  :focus-visible { outline: 2px solid var(--color-navy-700); outline-offset: 2px; border-radius: 6px; }
 }
 
 /* Fundo da aplicação: papel quente com auras sutis de navy/latão para dar profundidade */
@@ -53,14 +54,14 @@
   }
   .inset { @apply bg-slate-50/70 border border-slate-200/70 rounded-xl; }
 
-  .eyebrow { @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500; }
-  .num-badge { @apply inline-flex h-5 w-5 items-center justify-center rounded-full bg-navy-800 text-white text-[11px] font-semibold; }
+  .eyebrow { @apply text-xs font-semibold uppercase tracking-[0.14em] text-slate-500; }
+  .num-badge { @apply inline-flex h-5 w-5 items-center justify-center rounded-full bg-navy-800 text-white text-xs font-semibold; }
 
   .label { @apply block text-sm font-medium text-slate-700; }
 
   .field {
     @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm transition-all duration-150;
-    @apply placeholder:text-slate-400;
+    @apply placeholder:text-slate-500;
     color: var(--color-ink);
   }
   .field:focus {
@@ -81,6 +82,17 @@
   .btn-ghost:hover:not(:disabled) { @apply text-navy-800 bg-slate-50 border-slate-300; }
   .btn-danger { @apply bg-white text-red-600 border border-red-200; }
   .btn-danger:hover:not(:disabled) { @apply bg-red-50 border-red-300; }
+  /* Ação que altera dados no PJE (latão = "escreve"). */
+  .btn-brass { @apply text-white; background: var(--color-brass-500); box-shadow: 0 10px 24px -12px rgba(168,124,58,.6); }
+  .btn-brass:hover:not(:disabled) { background: var(--color-brass-600); }
+
+  /* Toasts de conclusão (canto inferior direito) */
+  .toast-host { @apply fixed bottom-4 right-4 z-50 flex w-[min(92vw,380px)] flex-col gap-2; }
+  .toast {
+    @apply flex items-start gap-3 rounded-2xl border bg-white p-3.5 text-sm;
+    box-shadow: 0 1px 2px rgba(17,28,48,.06), 0 22px 48px -30px rgba(17,28,48,.45);
+    animation: rise .55s cubic-bezier(.16,1,.3,1) both;
+  }
 
   /* Cartão selecionável (serviço, modo, perfil) */
   .pick {

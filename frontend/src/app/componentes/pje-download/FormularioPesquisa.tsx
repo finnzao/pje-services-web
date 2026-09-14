@@ -79,7 +79,7 @@ export function FormularioPesquisa({
             <input type="text" inputMode="numeric" maxLength={2} value={criteria.numeroTribunal || ''} onChange={(e) => apenasDigitos('numeroTribunal')(e.target.value)} placeholder="UF Trib." className="field" />
             <input type="text" inputMode="numeric" maxLength={4} value={criteria.numeroOrgao || ''} onChange={(e) => apenasDigitos('numeroOrgao')(e.target.value)} placeholder="Comarca" className="field" />
           </div>
-          <p className="mt-1 text-xs text-slate-400">Ramo da Justiça fixo (8). Preencha apenas o que tiver — a busca por comarca dispensa o número completo.</p>
+          <p className="mt-1 text-xs text-slate-500">Ramo da Justiça fixo (8). Preencha apenas o que tiver — a busca por comarca dispensa o número completo.</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

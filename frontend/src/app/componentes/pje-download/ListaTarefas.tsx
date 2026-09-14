@@ -74,6 +74,7 @@ export function ListaTarefas({
                 key={`${aba}-${tarefa.id}-${tarefa.nome}`}
                 type="button"
                 onClick={() => onToggle(tarefa.nome, aba === 'favoritas')}
+                aria-pressed={sel}
                 className={`row flex items-center justify-between gap-2 px-3.5 py-3 ${sel ? 'row-on' : ''}`}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -110,6 +111,7 @@ function TabBtn({ ativo, onClick, accent, children }: { ativo: boolean; onClick:
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={ativo}
       className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition-all ${ativo ? 'bg-white shadow-sm' : ''} ${cor}`}
     >
       {children}
@@ -121,14 +123,14 @@ function Pill({ ativo, accent, children }: { ativo: boolean; accent: 'navy' | 'b
   const cls = ativo
     ? accent === 'brass' ? 'bg-brass-100 text-brass-600' : 'bg-navy-100 text-navy-700'
     : 'bg-slate-200 text-slate-500';
-  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${cls}`}>{children}</span>;
+  return <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${cls}`}>{children}</span>;
 }
 
 function Vazio({ busca, aba }: { busca: boolean; aba: Aba }) {
   return (
     <div className="rounded-xl border border-dashed border-slate-200 p-7 text-center">
       <ClipboardList size={22} className="mx-auto mb-2 text-slate-300" />
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-slate-500">
         {busca ? 'Nenhuma tarefa encontrada.' : aba === 'favoritas' ? 'Nenhuma tarefa favorita.' : 'Nenhuma tarefa disponível.'}
       </p>
     </div>

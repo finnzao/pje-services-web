@@ -84,7 +84,7 @@ export function SeletorTipoDocumento({ selecionados, onChange, desabilitado }: S
           </div>
           <div className="scroll-area max-h-64 overflow-y-auto">
             {tiposFiltrados.length === 0 ? (
-              <p className="p-3 text-center text-xs text-slate-400">Nenhum tipo encontrado.</p>
+              <p className="p-3 text-center text-xs text-slate-500">Nenhum tipo encontrado.</p>
             ) : tiposFiltrados.map((tipo) => {
               const ativo = selecionadosLimpos.includes(tipo.nome);
               return (
@@ -98,7 +98,7 @@ export function SeletorTipoDocumento({ selecionados, onChange, desabilitado }: S
                     {ativo && <Check size={10} strokeWidth={3} />}
                   </span>
                   <span className="flex-1 truncate">{tipo.nome}</span>
-                  <span className={`font-mono text-[10px] ${ativo ? 'text-white/60' : 'text-slate-400'}`}>#{tipo.ids.join(',')}</span>
+                  <span className={`font-mono text-xs ${ativo ? 'text-white/60' : 'text-slate-500'}`}>#{tipo.ids.join(',')}</span>
                 </button>
               );
             })}

@@ -454,6 +454,17 @@ confirmação inline, faz polling de `GET /execucoes/:id` a cada 2,5 s e mostra 
 exclusão e a tabela de processos afetados, com botão para baixar a planilha `.xlsx` desses
 processos (`GET /execucoes/:id/planilha`).
 
+**Feedback de execução (todas as telas de job):** `feedback.ts` (título da aba com % e estado,
+notificação do navegador quando a aba está em segundo plano, rolagem até o bloco de progresso ao
+iniciar e ao concluir), `Toast.tsx` (toast de conclusão com ação "Ver resultado") e
+`BarraStatusFixa.tsx` (barra fixa no rodapé do cartão enquanto há execução ativa). As telas de
+dígito e etiquetas separam formulário e resultado (vista de resultado com "Ajustar parâmetros" /
+"Nova execução"); na etiquetagem, a escrita no PJE só é liberada após uma simulação com os
+parâmetros atuais, o cancelamento pede confirmação, os parâmetros salvos são anunciados na tela e
+há histórico das execuções anteriores com download da planilha. Acessibilidade: anel de foco
+visível, contraste mínimo `slate-500`, fonte mínima 12 px, `aria-pressed` nos cards, `aria-live`
+nos blocos de progresso, seleção única de etiqueta como `radiogroup`; máscara de CPF no login.
+
 ### 10.3 · Agendador (`EtiquetasScheduler`)
 
 Worker in-process sem dependência externa: tick a cada 60 s; dispara quando `ativo`, há etiqueta,

@@ -57,7 +57,7 @@ export function DownloadAction({
         type="button"
         onClick={onClick}
         disabled={!habilitado}
-        className={`btn w-full py-3.5 text-sm ${habilitado ? (isAdvogados ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-400'}`}
+        className={`btn w-full py-3.5 text-sm ${habilitado ? (isAdvogados ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-500'}`}
       >
         {carregando ? <Loader2 size={16} className="animate-spin" /> : <Icone size={16} />}
         {obterLabel()}
@@ -65,8 +65,8 @@ export function DownloadAction({
 
       {!valido && !carregando && (
         <div className="mt-2 flex items-center justify-center gap-1.5">
-          <AlertCircle size={12} className="text-slate-400" />
-          <p className="text-xs text-slate-400">{mensagem}</p>
+          <AlertCircle size={12} className="text-slate-500" />
+          <p className="text-xs text-slate-500">{mensagem}</p>
         </div>
       )}
     </div>

@@ -19,11 +19,12 @@ export function EtapaLogin({
   const [cpf, setCpf] = useState('');
   const [senha, setSenha] = useState('');
   const [codigo2FA, setCodigo2FA] = useState('');
+  const cpfDigitos = cpf.replace(/\D/g, '');
 
   const handleSubmitLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cpf.trim() || !senha.trim()) return;
-    onLogin(cpf.replace(/\D/g, ''), senha);
+    if (cpfDigitos.length !== 11 || !senha.trim()) return;
+    onLogin(cpfDigitos, senha);
   };
 
   const handleSubmit2FA = (e: React.FormEvent) => {
@@ -99,10 +100,15 @@ export function EtapaLogin({
             <div>
               <label className="label mb-1.5">CPF</label>
               <input
-                type="text" value={cpf} onChange={(e) => setCpf(e.target.value)}
-                placeholder="000.000.000-00" autoComplete="username" disabled={carregando}
+                type="text" value={cpf} onChange={(e) => setCpf(formatarCpf(e.target.value))}
+                placeholder="000.000.000-00" autoComplete="username" inputMode="numeric" maxLength={14}
+                disabled={carregando} aria-invalid={cpf.length > 0 && cpfDigitos.length !== 11}
+                aria-describedby="cpf-ajuda"
                 className="field font-mono"
               />
+              <p id="cpf-ajuda" className={`mt-1 text-xs ${cpf.length > 0 && cpfDigitos.length !== 11 ? 'text-red-600' : 'text-slate-500'}`}>
+                {cpf.length > 0 && cpfDigitos.length !== 11 ? `${cpfDigitos.length}/11 dígitos` : 'Somente números; a formatação é automática.'}
+              </p>
             </div>
             <div>
               <label className="label mb-1.5">Senha</label>
@@ -112,18 +118,27 @@ export function EtapaLogin({
                 className="field"
               />
             </div>
-            <button type="submit" disabled={carregando || !cpf.trim() || !senha.trim()} className="btn btn-primary w-full py-3 text-sm">
+            <button type="submit" disabled={carregando || cpfDigitos.length !== 11 || !senha.trim()} className="btn btn-primary w-full py-3 text-sm">
               {carregando ? <><Loader2 size={16} className="animate-spin" /> Autenticando…</> : 'Entrar no PJE'}
             </button>
           </form>
 
-          <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+          <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-xs text-slate-500">
             <ShieldCheck size={13} /> Credenciais enviadas diretamente ao PJE — não são armazenadas.
           </p>
         </div>
       </div>
     </div>
   );
+}
+
+/** Máscara 000.000.000-00 aplicada conforme o usuário digita (só dígitos são mantidos). */
+function formatarCpf(valor: string): string {
+  const d = valor.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 
 function Alerta({ children }: { children: React.ReactNode }) {

@@ -362,7 +362,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
               </span>
             </div>
             {acao === 'download' && (
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-slate-500">
                 Se o navegador suportar acesso a pastas (Chrome/Edge), cada parte com processo encontrado gera sua própria subpasta com os PDFs soltos (sem ZIP); partes sem processo não geram pasta. Ao final, um relatório único com o resumo de todas as partes é salvo na mesma pasta.
               </p>
             )}
@@ -404,7 +404,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
                 <div className="flex min-w-0 items-center gap-2">
                   {item.status === 'concluido' && <CheckCircle size={14} className="shrink-0 text-emerald-600" />}
                   {item.status === 'erro' && <AlertCircle size={14} className="shrink-0 text-red-600" />}
-                  {item.status === 'cancelado' && <X size={14} className="shrink-0 text-slate-400" />}
+                  {item.status === 'cancelado' && <X size={14} className="shrink-0 text-slate-500" />}
                   {item.status === 'executando' && <Loader2 size={14} className="shrink-0 animate-spin text-navy-600" />}
                   {item.status === 'pendente' && <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-slate-300" />}
                   <span className="truncate text-ink">{item.nome}</span>
@@ -495,7 +495,7 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
         type="button"
         onClick={handleSubmit}
         disabled={!podeSubmit}
-        className={`btn w-full py-3.5 text-sm ${podeSubmit ? (acao === 'planilha' ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-400'}`}
+        className={`btn w-full py-3.5 text-sm ${podeSubmit ? (acao === 'planilha' ? 'btn-emerald' : 'btn-primary') : 'cursor-not-allowed bg-slate-200 text-slate-500'}`}
       >
         {ocupado ? <Loader2 size={16} className="animate-spin" /> : acao === 'planilha' ? <FileSpreadsheet size={16} /> : <Download size={16} />}
         {ocupado
@@ -507,12 +507,12 @@ export function TelaPesquisaGeral({ perfil, sessionId }: TelaPesquisaGeralProps)
 
       {bloqueado && !ocupado && (
         <div className="mt-2 flex items-center justify-center gap-1.5">
-          <AlertCircle size={12} className="text-slate-400" />
-          <p className="text-xs text-slate-400">{bloqueado}</p>
+          <AlertCircle size={12} className="text-slate-500" />
+          <p className="text-xs text-slate-500">{bloqueado}</p>
         </div>
       )}
 
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-slate-500">
         <Search size={12} /> Perfil: {perfil.nome}
       </p>
     </div>

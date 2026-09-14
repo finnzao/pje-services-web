@@ -26,11 +26,11 @@ export function ExecutionStatus({ estado, onCancelar }: ExecutionStatusProps) {
     : isFailed ? <AlertCircle size={16} className="text-red-600" /> : <Loader2 size={16} className="animate-spin text-navy-600" />;
 
   return (
-    <div className={`rounded-2xl border p-4 animate-fade ${tone}`}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          {Icon}
-          <span className="truncate text-sm font-semibold text-ink">{estado.downloadMessage}</span>
+    <div className={`rounded-2xl border p-4 animate-fade ${tone}`} role="status" aria-live="polite" aria-atomic="true">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 shrink-0">{Icon}</span>
+          <span className="break-words text-sm font-semibold text-ink">{estado.downloadMessage}</span>
         </div>
         {isActive && onCancelar && (
           <button type="button" onClick={onCancelar} className="flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-800">
@@ -77,7 +77,7 @@ function Stat({ valor, rotulo, tone }: { valor: React.ReactNode; rotulo: string;
   return (
     <div className={`rounded-xl border p-2.5 text-center ${map[tone]}`}>
       <div className="text-lg font-bold leading-none">{valor}</div>
-      <div className="mt-1 text-[10px] uppercase tracking-wide opacity-70">{rotulo}</div>
+      <div className="mt-1 text-xs uppercase tracking-wide opacity-70">{rotulo}</div>
     </div>
   );
 }

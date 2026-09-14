@@ -94,6 +94,13 @@ export async function executarEtiquetagem(opts: {
   });
 }
 
+/** Resumo das execuções anteriores (sem a lista de processos), mais recentes primeiro. */
+export type ExecucaoResumo = Omit<ExecucaoEtiquetas, 'processos'>;
+
+export async function listarExecucoesEtiquetas() {
+  return request<ExecucaoResumo[]>('/api/pje/etiquetas/execucoes');
+}
+
 export async function obterExecucaoEtiquetas(id: string) {
   return request<ExecucaoEtiquetas>(`/api/pje/etiquetas/execucoes/${id}`);
 }

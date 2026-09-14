@@ -51,6 +51,7 @@ export function DownloadModeSelector({
               type="button"
               onClick={() => onSelecionar(modo.id)}
               disabled={desabilitado}
+              aria-pressed={on}
               className={`pick group p-3.5 ${on ? 'pick-on' : ''}`}
             >
               <span className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${on ? 'bg-navy-800 text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-navy-50 group-hover:text-navy-600'}`}>

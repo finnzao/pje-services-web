@@ -11,7 +11,7 @@ interface CampoBuscaProps {
 export function CampoBusca({ valor, onChange, placeholder = 'Buscar...' }: CampoBuscaProps) {
   return (
     <div className="relative">
-      <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+      <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
       <input
         type="text"
         value={valor}
