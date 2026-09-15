@@ -12,7 +12,7 @@ function proc(overrides: Partial<ProcessoDigito>): ProcessoDigito {
   return {
     idProcesso: 1, numeroProcesso: '8000001-11.2024.8.05.0001', digito: 1, anoCnj: 2024,
     tarefaAtual: 'Análise', outrasTarefas: [], etiquetas: [], diasParados: 10, metas: [],
-    metaAUmPasso: false, situacao: 'TRABALHAVEL', bloqueado: false, prioridade: 'P4',
+    metaAUmPasso: false, situacao: 'TRABALHAVEL', bloqueado: false, prioridade: 'P3',
     pontuacao: 5, faixa: 'NORMAL', blocos: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 1 }, flags: [], providencias: [],
     ...overrides,
   };
@@ -73,7 +73,7 @@ describe('gerarSaidaDigito', () => {
     expect(linhaAna!.getCell(3).value).toBe(2);
     expect(linhaAna!.getCell(4).value).toBe(1);
     expect(linhaAna!.getCell(5).value).toBe(1);
-    expect(linhaAna!.getCell(8).value).toBe(1);
+    expect(linhaAna!.getCell(7).value).toBe(1);
 
     // Aba do servidor: cabeçalho azul-escuro, linha P1 tingida de rosa, dias > 120 em vermelho.
     const ana = wb.getWorksheet('Ana')!;
@@ -81,6 +81,20 @@ describe('gerarSaidaDigito', () => {
     expect((ana.getCell(5, 1).fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFF4B6B6');
     expect((ana.getCell(5, 4).fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFE06666');
     expect(ana.getCell(5, 6).value).toBe('P1');
+  });
+
+  it('reduzida: só número, dígito, etiquetas e dias parados nas abas de processos', async () => {
+    const { distribuicao, digitos, metas } = distribuicaoExemplo();
+    const { filePath } = await gerarSaidaDigito(distribuicao, digitos, 'xlsx', 'test-reduzida', CONFIG_PESO_PADRAO, metas, true);
+    gerados.push(filePath);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(filePath);
+    const ana = wb.getWorksheet('Ana')!;
+    const cabecalho = [1, 2, 3, 4, 5].map((c) => ana.getCell(4, c).value);
+    expect(cabecalho).toEqual(['Número do processo', 'Dígito', 'Etiquetas', 'Dias parados', null]);
+    expect(ana.getCell(5, 4).value).toBe(130);
+    expect(wb.getWorksheet('Filas de espera')!.getCell(4, 1).value).toBe('Servidor');
   });
 
   it('zip: Resumo.xlsx solto ao lado dos arquivos por servidor', async () => {

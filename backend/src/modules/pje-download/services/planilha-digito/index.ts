@@ -3,5 +3,5 @@ export {
   CONFIG_PESO_PADRAO, FLAGS, PROVIDENCIAS,
   avaliarProcesso, calcularDiasParados, distribuirPorServidor,
   extrairDigito, metasDoProcesso, montarMapaAtribuicoes,
-  ordenarPorPrioridade, selecionarTarefas,
+  ordenarPorDiasParados, selecionarTarefas,
 } from './digito-core';

@@ -89,12 +89,17 @@ export interface ConfigPeso {
   padroesFilaEspera: string[];
   multiplicadorFilaEspera: number;
   // Réguas de tempo morto e faixas de peso
+  /** Dias parados acima disso viram P1, com ou sem meta. */
+  limiarDiasP1: number;
   limiarTempoMortoCnj: number;
   limiarTempoMortoInterno: number;
   limiarCritico: number;
   limiarAlto: number;
   limiarMedio: number;
 }
+
+/** sequencial = último algarismo de NNNNNNN · verificador1/2 = 1º/2º algarismo de DD (após o hífen). */
+export type ModoDigito = 'sequencial' | 'verificador1' | 'verificador2';
 
 export interface GerarPlanilhaDigitoDTO {
   credentials?: { cpf: string; password: string };
@@ -105,6 +110,10 @@ export interface GerarPlanilhaDigitoDTO {
   /** Tarefas do painel excluídas da análise. */
   tarefasIgnoradas?: string[];
   formato: 'xlsx' | 'zip';
+  /** Só número, dígito, etiquetas e dias parados nas abas de processos. */
+  reduzida?: boolean;
+  /** Qual algarismo do número CNJ define o dígito (padrão: sequencial). */
+  modoDigito?: ModoDigito;
   /** Sobrescreve pontualmente os parâmetros do motor de peso. */
   pesos?: Partial<ConfigPeso>;
 }
@@ -131,7 +140,7 @@ export interface ProcessoDigito {
   metaAUmPasso: boolean;
   situacao: SituacaoProcesso;
   bloqueado: boolean;
-  prioridade: 'P1' | 'P2' | 'P3' | 'P4';
+  prioridade: 'P1' | 'P2' | 'P3';
   /** Peso final 0–100 = min(A+B+C+D+E, 100) × F. */
   pontuacao: number;
   faixa: FaixaPeso;

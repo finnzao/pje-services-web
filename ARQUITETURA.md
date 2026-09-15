@@ -343,8 +343,8 @@ sobrescritos pontualmente no DTO (`pesos`).
    `SEM_ETIQUETA_DIGITO` 1; teto 15); **E** proximidade da baixa pela tarefa (10/6/3/0);
    **F** situação (trabalhável 1,0 · fila de espera 0,3 por padrões de tarefa · `GAB_nao
    trabalhar` = `BLOQUEADO`). Faixas: CRÍTICO ≥ 70 · ALTO 50–69 · MÉDIO 30–49 · NORMAL < 30.
-   Prioridade P1 = Meta a um passo · P2 = Meta/GAB · P3 = tempo morto > 120 dias · P4 = normal;
-   ordem: prioridade → peso desc → dias desc → ano asc. As abas de servidor só levam os
+   Prioridade P1 = parado > 30 dias (com ou sem meta) · P2 = Meta/GAB · P3 = normal;
+   ordem: dias parados desc → meta primeiro no empate → peso desc → ano asc. As abas de servidor só levam os
    trabalháveis; os em fila vão para a aba "Filas de espera" (acompanhar/cobrar terceiro). Os
    exemplos calculados da §7 do documento são reproduzidos na suíte Vitest.
 4. **Auditoria de etiquetas:** processo atribuído sem etiqueta contendo o nome do seu servidor
@@ -352,12 +352,13 @@ sobrescritos pontualmente no DTO (`pesos`).
    `ETIQUETA_DIVERGENTE` (o cálculo pelo dígito prevalece). O resumo do job alimenta o aviso de
    etiquetagem no frontend — a etiquetagem em lote pelo próprio Fórum Hub é evolução prevista.
 5. **Saída e download:** aba **Resumo** primeiro no `.xlsx` (ou `Resumo.xlsx` solto no `.zip`) com
-   1. Totais gerais, 2. Totais por servidor (trabalháveis, P1–P4, fila, crítico/alto, linha TOTAL),
+   1. Totais gerais, 2. Totais por servidor (trabalháveis, P1–P3, fila, crítico/alto, linha TOTAL),
    3. Metas a um passo de zerar e 4. Demais metas; paleta da planilha de validação BI da unidade
-   (cabeçalho `1F4E78`, linha tingida pela prioridade P1 rosa/P2 laranja/P3 amarelo/P4 verde, dias
+   (cabeçalho `1F4E78`, linha tingida pela prioridade P1 rosa/P2 laranja/P3 verde, dias
    parados laranja > 100 e vermelho > 120, meta lilás, flag salmão, legenda de cores na linha 3).
    Demais abas com cabeçalho congelado (linha 4), autofiltro, destaque de dias
-   (laranja ≥ 100, vermelho ≥ 120) e estilos compartilhados (`xlsx-common.ts`). O arquivo é
+   (laranja ≥ 100, vermelho ≥ 120) e estilos compartilhados (`xlsx-common.ts`). Com
+   `reduzida: true` as abas de processos levam só número, dígito, etiquetas e dias parados. O arquivo é
    nomeado com o jobId e `GET /:jobId/download` resolve **pelo jobId** — não repete o padrão
    "arquivo mais recente" de advogados. O `progressMap` tem TTL: jobs terminais expiram em 1 h,
    varridos a cada 30 min como o GC de arquivos.

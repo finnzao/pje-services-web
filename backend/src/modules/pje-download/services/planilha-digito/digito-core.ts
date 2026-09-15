@@ -1,5 +1,5 @@
 import type {
-  AtribuicaoDigito, BlocosPeso, ConfigPeso, FaixaPeso,
+  AtribuicaoDigito, BlocosPeso, ConfigPeso, FaixaPeso, ModoDigito,
   ProcessoDigito, SituacaoProcesso,
 } from '../../../../shared/types';
 
@@ -102,6 +102,7 @@ export const CONFIG_PESO_PADRAO: ConfigPeso = {
   ],
   multiplicadorFilaEspera: 0.3,
   // Réguas e faixas
+  limiarDiasP1: 30,
   limiarTempoMortoCnj: 100,
   limiarTempoMortoInterno: 120,
   limiarCritico: 70,
@@ -124,22 +125,19 @@ function contemAlgum(alvo: string, termos: string[]): boolean {
 }
 
 /**
- * Extrai o dígito de distribuição: o último algarismo do sequencial NNNNNNN
- * do número CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO). Não confundir com o dígito
- * verificador DD — o painel do PJE chama este conceito de
- * "digitoFinalNumeroProcesso". Aceita o número com ou sem máscara.
+ * Extrai o dígito de distribuição do número CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO).
+ * Por padrão é o último algarismo do sequencial NNNNNNN (o painel do PJE chama
+ * de "digitoFinalNumeroProcesso"); o modo permite usar o 1º ou o 2º algarismo
+ * do verificador DD. Aceita o número com ou sem máscara.
  */
-export function extrairDigito(numeroProcesso: string): { digito: number | null; ano: number | null } {
-  const num = (numeroProcesso || '').trim();
-  const comMascara = num.match(/^(\d{7})-\d{2}\.(\d{4})\.\d\.\d{2}\.\d{4}$/);
-  if (comMascara) {
-    return { digito: Number(comMascara[1][6]), ano: Number(comMascara[2]) };
-  }
-  const soDigitos = num.replace(/\D/g, '');
-  if (soDigitos.length === 20) {
-    return { digito: Number(soDigitos[6]), ano: Number(soDigitos.slice(9, 13)) };
-  }
-  return { digito: null, ano: null };
+export function extrairDigito(
+  numeroProcesso: string,
+  modo: ModoDigito = 'sequencial',
+): { digito: number | null; ano: number | null } {
+  const soDigitos = (numeroProcesso || '').replace(/\D/g, '');
+  if (soDigitos.length !== 20) return { digito: null, ano: null };
+  const posicao = modo === 'verificador1' ? 7 : modo === 'verificador2' ? 8 : 6;
+  return { digito: Number(soDigitos[posicao]), ano: Number(soDigitos.slice(9, 13)) };
 }
 
 /** Valida e indexa as atribuições dígito → servidor (última atribuição do dígito vence). */
@@ -312,7 +310,7 @@ export function classificarSituacao(tarefas: string[], config: ConfigPeso): Situ
 export interface AvaliacaoPeso {
   peso: number;
   faixa: FaixaPeso;
-  prioridade: 'P1' | 'P2' | 'P3' | 'P4';
+  prioridade: 'P1' | 'P2' | 'P3';
   situacao: SituacaoProcesso;
   bloqueado: boolean;
   metaAUmPasso: boolean;
@@ -335,8 +333,8 @@ export interface DadosAvaliacao {
 
 /**
  * Motor de peso completo (DOC_Peso_do_Processo_v1 §3–§5):
- * PESO = min(A+B+C+D+E, 100) × F. P1 ⇔ A=40 · P2 ⇔ A≥12 · P3 ⇔ A=0 e
- * dias > régua interna · P4 restante.
+ * PESO = min(A+B+C+D+E, 100) × F. P1 ⇔ dias > limiarDiasP1 (com ou sem meta) ·
+ * P2 ⇔ A≥12 (Meta/GAB) · P3 restante.
  */
 export function avaliarProcesso(
   dados: DadosAvaliacao,
@@ -385,9 +383,8 @@ export function avaliarProcesso(
     : peso >= config.limiarAlto ? 'ALTO'
       : peso >= config.limiarMedio ? 'MEDIO' : 'NORMAL';
 
-  const prioridade: AvaliacaoPeso['prioridade'] = A >= config.pontosMetaAUmPasso ? 'P1'
-    : A >= config.pesoGabSemMeta ? 'P2'
-      : dias > config.limiarTempoMortoInterno ? 'P3' : 'P4';
+  const prioridade: AvaliacaoPeso['prioridade'] = dias > config.limiarDiasP1 ? 'P1'
+    : A >= config.pesoGabSemMeta ? 'P2' : 'P3';
 
   const providencias = flags
     .map((f) => PROVIDENCIAS[f])
@@ -397,17 +394,18 @@ export function avaliarProcesso(
 }
 
 /**
- * Ordem de trabalho (DOC_Peso §5 + critério de aceitação 2): a hierarquia de
- * prioridade nunca é invertida pelo peso — P1 antes de tudo; dentro da mesma
- * prioridade, peso desc → dias desc → ano asc → número asc.
+ * Ordem de trabalho: mais dias parados primeiro; com os mesmos dias, processo de
+ * meta vem antes; depois peso desc → ano asc → número asc.
  */
-export function ordenarPorPrioridade(processos: ProcessoDigito[]): ProcessoDigito[] {
+export function ordenarPorDiasParados(processos: ProcessoDigito[]): ProcessoDigito[] {
   return [...processos].sort((a, b) => {
-    if (a.prioridade !== b.prioridade) return a.prioridade.localeCompare(b.prioridade);
-    if (b.pontuacao !== a.pontuacao) return b.pontuacao - a.pontuacao;
     const diasA = a.diasParados ?? -1;
     const diasB = b.diasParados ?? -1;
     if (diasB !== diasA) return diasB - diasA;
+    const metaA = a.metas.length > 0 ? 1 : 0;
+    const metaB = b.metas.length > 0 ? 1 : 0;
+    if (metaB !== metaA) return metaB - metaA;
+    if (b.pontuacao !== a.pontuacao) return b.pontuacao - a.pontuacao;
     const anoA = a.anoCnj ?? 9999;
     const anoB = b.anoCnj ?? 9999;
     if (anoA !== anoB) return anoA - anoB;

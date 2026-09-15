@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileSpreadsheet, FileArchive, Hash, Info, Loader2, Tags, AlertTriangle, RotateCcw, SlidersHorizontal,
+  Plus, Trash2, User,
 } from 'lucide-react';
 import { BarraStatusFixa } from './BarraStatusFixa';
 import { ListaTarefas, type TarefaSelecionada } from './ListaTarefas';
@@ -14,12 +15,21 @@ import {
 import type { TarefaPJE } from './types';
 import {
   gerarPlanilhaDigito, obterProgressoDigito, cancelarPlanilhaDigito, downloadPlanilhaDigito,
-  type PlanilhaDigitoProgress, type PlanilhaDigitoResumo,
+  type ModoDigito, type PlanilhaDigitoProgress, type PlanilhaDigitoResumo,
 } from './api-planilha-digito';
 
 const DIGITOS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 const POLL_INTERVAL_MS = 2500;
 const TERMINAIS = ['completed', 'failed', 'cancelled'];
+
+interface ServidorDigitos { nome: string; digitos: number[]; }
+
+// Exemplo 8001732-90.2023…: sequencial → 2, verificador1 → 9, verificador2 → 0.
+const MODOS_DIGITO: Array<{ valor: ModoDigito; rotulo: string; exemplo: React.ReactNode }> = [
+  { valor: 'sequencial', rotulo: 'Último do sequencial', exemplo: <>800173<strong>2</strong>-90.2023</> },
+  { valor: 'verificador1', rotulo: '1º dígito verificador', exemplo: <>8001732-<strong>9</strong>0.2023</> },
+  { valor: 'verificador2', rotulo: '2º dígito verificador', exemplo: <>8001732-9<strong>0</strong>.2023</> },
+];
 
 interface TelaPlanilhaDigitoProps {
   sessionId: string;
@@ -29,9 +39,11 @@ interface TelaPlanilhaDigitoProps {
 }
 
 export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndice }: TelaPlanilhaDigitoProps) {
-  const [atribuicoes, setAtribuicoes] = useState<Record<number, string>>({});
+  const [modoDigito, setModoDigito] = useState<ModoDigito>('sequencial');
+  const [servidores, setServidores] = useState<ServidorDigitos[]>([{ nome: '', digitos: [] }]);
   const [ignoradas, setIgnoradas] = useState<TarefaSelecionada[]>([]);
   const [formato, setFormato] = useState<'xlsx' | 'zip'>('xlsx');
+  const [reduzida, setReduzida] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [iniciando, setIniciando] = useState(false);
   const [job, setJob] = useState<PlanilhaDigitoProgress | null>(null);
@@ -67,22 +79,50 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
     }
   }, [job]);
 
-  const servidoresConhecidos = useMemo(
-    () => [...new Set(Object.values(atribuicoes).map((s) => s.trim()).filter(Boolean))],
-    [atribuicoes],
-  );
-
   const atribuicoesValidas = useMemo(
-    () => DIGITOS
-      .filter((d) => (atribuicoes[d] || '').trim())
-      .map((d) => ({ digito: d, servidor: atribuicoes[d].trim() })),
-    [atribuicoes],
+    () => servidores
+      .filter((s) => s.nome.trim())
+      .flatMap((s) => s.digitos.map((digito) => ({ digito, servidor: s.nome.trim() }))),
+    [servidores],
   );
 
-  const digitosSemServidor = DIGITOS.filter((d) => !(atribuicoes[d] || '').trim());
+  const servidoresConhecidos = useMemo(
+    () => [...new Set(atribuicoesValidas.map((a) => a.servidor))],
+    [atribuicoesValidas],
+  );
 
-  const setServidor = useCallback((digito: number, nome: string) => {
-    setAtribuicoes((prev) => ({ ...prev, [digito]: nome }));
+  const digitosSemServidor = DIGITOS.filter((d) => !atribuicoesValidas.some((a) => a.digito === d));
+
+  const donoDoDigito = (digito: number) => servidores.findIndex((s) => s.digitos.includes(digito));
+
+  const setNome = useCallback((idx: number, nome: string) => {
+    setServidores((prev) => prev.map((s, i) => (i === idx ? { ...s, nome } : s)));
+  }, []);
+
+  // Um dígito só pode ter um servidor: atribuir aqui tira dos outros.
+  const atribuirDigitos = useCallback((idx: number, digitos: number[], remover: boolean) => {
+    setServidores((prev) => prev.map((s, i) => {
+      const semEles = s.digitos.filter((d) => !digitos.includes(d));
+      if (i !== idx || remover) return { ...s, digitos: semEles };
+      return { ...s, digitos: [...semEles, ...digitos].sort((a, b) => a - b) };
+    }));
+  }, []);
+
+  const toggleDigito = useCallback((idx: number, digito: number) => {
+    atribuirDigitos(idx, [digito], servidores[idx].digitos.includes(digito));
+  }, [atribuirDigitos, servidores]);
+
+  const atribuirParidade = useCallback((idx: number, resto: 0 | 1) => {
+    const lote = DIGITOS.filter((d) => d % 2 === resto);
+    atribuirDigitos(idx, lote, lote.every((d) => servidores[idx].digitos.includes(d)));
+  }, [atribuirDigitos, servidores]);
+
+  const addServidor = useCallback(() => {
+    setServidores((prev) => [...prev, { nome: '', digitos: [] }]);
+  }, []);
+
+  const removeServidor = useCallback((idx: number) => {
+    setServidores((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
   }, []);
 
   const toggleIgnorada = useCallback((nome: string, favorita: boolean) => {
@@ -116,6 +156,8 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
         atribuicoes: atribuicoesValidas,
         tarefasIgnoradas: ignoradas.map((t) => t.nome),
         formato,
+        reduzida,
+        modoDigito,
       });
       setJob({
         jobId: result.jobId, status: 'listing', progress: 0,
@@ -128,7 +170,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
     } finally {
       setIniciando(false);
     }
-  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, startPolling]);
+  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, reduzida, modoDigito, startPolling]);
 
   const handleCancelar = useCallback(async () => {
     if (!job) return;
@@ -157,7 +199,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="num-badge">{jobAtivo ? '⏳' : '✓'}</span>
-              <span className="eyebrow">Planilha por dígito · {servidoresConhecidos.length} servidor(es) · {formato === 'zip' ? 'zip por servidor' : 'arquivo único'}</span>
+              <span className="eyebrow">Planilha por dígito · {servidoresConhecidos.length} servidor(es) · {formato === 'zip' ? 'zip por servidor' : 'arquivo único'}{reduzida ? ' · reduzida' : ''}</span>
             </div>
             {!jobAtivo && (
               <div className="flex gap-2">
@@ -191,34 +233,87 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
               <span className="num-badge">2</span>
               <span className="eyebrow">Atribua os dígitos aos servidores</span>
             </div>
+            <p className="label mb-2">Qual algarismo do número CNJ é o dígito?</p>
+            <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Posição do dígito no número CNJ">
+              {MODOS_DIGITO.map((m) => (
+                <button
+                  key={m.valor}
+                  type="button"
+                  role="radio"
+                  aria-checked={modoDigito === m.valor}
+                  onClick={() => setModoDigito(m.valor)}
+                  className={`pick px-3.5 py-3 ${modoDigito === m.valor ? 'pick-on' : ''}`}
+                >
+                  <span className="block text-sm font-semibold text-ink">{m.rotulo}</span>
+                  <span className="mt-0.5 block font-mono text-xs text-slate-600">{m.exemplo}…</span>
+                </button>
+              ))}
+            </div>
             <div className="mb-4 flex items-start gap-2 rounded-xl bg-navy-50 px-3.5 py-2.5 text-xs text-navy-700">
               <Info size={14} className="mt-0.5 flex-shrink-0" aria-hidden />
               <span>
-                O dígito é o <strong>último algarismo do sequencial</strong> do número CNJ
-                (ex.: 800173<strong>2</strong>-90.2023… → dígito 2). Um servidor pode acumular
-                vários dígitos; dígitos em branco vão para a aba <strong>Não atribuídos</strong>.
+                Informe o nome do servidor e clique nos dígitos dele. Cada dígito pertence a um
+                único servidor; dígitos em branco vão para a aba <strong>Não atribuídos</strong>.
               </span>
             </div>
-            <datalist id="servidores-digito">
-              {servidoresConhecidos.map((s) => <option key={s} value={s} />)}
-            </datalist>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {DIGITOS.map((d) => (
-                <label key={d} className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2 focus-within:border-navy-400">
-                  <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-navy-50 text-sm font-bold text-navy-700" aria-hidden>
-                    {d}
-                  </span>
-                  <span className="sr-only">Servidor do dígito {d}</span>
-                  <input
-                    type="text"
-                    list="servidores-digito"
-                    value={atribuicoes[d] || ''}
-                    onChange={(e) => setServidor(d, e.target.value)}
-                    placeholder="Sem servidor (não atribuído)"
-                    className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-slate-400"
-                  />
-                </label>
+            <div className="space-y-3">
+              {servidores.map((s, idx) => (
+                <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <User size={16} className="flex-shrink-0 text-navy-700" aria-hidden />
+                    <input
+                      type="text"
+                      value={s.nome}
+                      onChange={(e) => setNome(idx, e.target.value)}
+                      placeholder="Nome do servidor"
+                      aria-label={`Nome do servidor ${idx + 1}`}
+                      className="field"
+                    />
+                    {servidores.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeServidor(idx)}
+                        className="btn btn-ghost flex-shrink-0 px-2.5 py-2"
+                        aria-label="Remover servidor"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Dígitos de ${s.nome || `servidor ${idx + 1}`}`}>
+                      {DIGITOS.map((d) => {
+                        const dono = donoDoDigito(d);
+                        const meu = dono === idx;
+                        const deOutro = dono !== -1 && !meu;
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => toggleDigito(idx, d)}
+                            aria-pressed={meu}
+                            title={deOutro ? `Atribuído a ${servidores[dono].nome.trim() || 'outro servidor'} — clique para trazer para cá` : undefined}
+                            className={`flex h-10 w-10 items-center justify-center rounded-xl border text-sm font-bold transition-colors ${
+                              meu ? 'border-navy-800 bg-navy-800 text-white'
+                                : deOutro ? 'border-dashed border-slate-300 bg-slate-50 text-slate-400'
+                                  : 'border-slate-200 bg-white text-navy-700 hover:border-navy-400'
+                            }`}
+                          >
+                            {d}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="ml-auto flex gap-1.5">
+                      <button type="button" onClick={() => atribuirParidade(idx, 0)} className="btn btn-ghost px-3 py-2 text-xs">PARES</button>
+                      <button type="button" onClick={() => atribuirParidade(idx, 1)} className="btn btn-ghost px-3 py-2 text-xs">ÍMPARES</button>
+                    </div>
+                  </div>
+                </div>
               ))}
+              <button type="button" onClick={addServidor} className="btn btn-ghost w-full py-2.5 text-sm">
+                <Plus size={15} /> Adicionar servidor
+              </button>
             </div>
             {atribuicoesValidas.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -285,6 +380,20 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, credenciais, perfilIndi
                 descricao="Resumo.xlsx + cada planilha nomeada com o servidor."
               />
             </div>
+            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3">
+              <input
+                type="checkbox"
+                checked={reduzida}
+                onChange={(e) => setReduzida(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-navy-800"
+              />
+              <span className="text-sm">
+                <span className="font-semibold text-ink">Planilha reduzida</span>
+                <span className="block text-xs text-slate-600">
+                  Só número do processo, dígito, etiquetas e dias parados.
+                </span>
+              </span>
+            </label>
           </div>
 
           <button

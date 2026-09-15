@@ -2,6 +2,9 @@ import { API_BASE, request } from '../../lib/api-client';
 
 export interface AtribuicaoDigito { digito: number; servidor: string; }
 
+/** sequencial = último algarismo antes do hífen · verificador1/2 = 1º/2º algarismo após o hífen. */
+export type ModoDigito = 'sequencial' | 'verificador1' | 'verificador2';
+
 export interface GerarPlanilhaDigitoParams {
   /** Opcional quando pjeSessionId aponta para uma sessão ativa (após F5 a senha não fica no navegador). */
   credentials?: { cpf: string; password: string };
@@ -10,6 +13,9 @@ export interface GerarPlanilhaDigitoParams {
   atribuicoes: AtribuicaoDigito[];
   tarefasIgnoradas?: string[];
   formato: 'xlsx' | 'zip';
+  /** Só número, dígito, etiquetas e dias parados. */
+  reduzida?: boolean;
+  modoDigito?: ModoDigito;
 }
 
 export interface PlanilhaDigitoResumo {

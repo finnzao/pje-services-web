@@ -5,7 +5,7 @@ import {
   avaliarProcesso, calcularBlocoB, calcularBlocoC, calcularBlocoE,
   calcularDiasParados, classificarSituacao, distribuirPorServidor,
   extrairDigito, metasDoProcesso, montarMapaAtribuicoes, normalizarMeta,
-  ordenarPorPrioridade, parseDataPje, selecionarTarefas,
+  ordenarPorDiasParados, parseDataPje, selecionarTarefas,
   type DadosAvaliacao,
 } from '../modules/pje-download/services/planilha-digito/digito-core';
 import { extrairDataMovimento } from '../modules/pje-download/services/planilha-digito/planilha-digito.service';
@@ -27,7 +27,7 @@ function procBase(overrides: Partial<ProcessoDigito> = {}): ProcessoDigito {
     digito: 2, anoCnj: 2023, tarefaAtual: 'Tarefa X', outrasTarefas: [],
     etiquetas: [], assuntoPrincipal: 'Assunto', diasParados: 0,
     metas: [], metaAUmPasso: false, situacao: 'TRABALHAVEL', bloqueado: false,
-    prioridade: 'P4', pontuacao: 0, faixa: 'NORMAL',
+    prioridade: 'P3', pontuacao: 0, faixa: 'NORMAL',
     blocos: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 1 }, flags: [], providencias: [],
     ...overrides,
   };
@@ -38,6 +38,12 @@ describe('extrairDigito', () => {
     expect(extrairDigito('8001732-90.2023.8.05.0216')).toEqual({ digito: 2, ano: 2023 });
     expect(extrairDigito('8001229-69.2023.8.05.0216')).toEqual({ digito: 9, ano: 2023 });
     expect(extrairDigito('0000613-27.2009.8.05.0216')).toEqual({ digito: 3, ano: 2009 });
+  });
+
+  it('modo verificador usa o 1º ou o 2º algarismo depois do hífen', () => {
+    expect(extrairDigito('8001732-90.2023.8.05.0216', 'verificador1').digito).toBe(9);
+    expect(extrairDigito('8001732-90.2023.8.05.0216', 'verificador2').digito).toBe(0);
+    expect(extrairDigito('80017329020238050216', 'verificador2').digito).toBe(0);
   });
 
   it('aceita número sem máscara e rejeita malformados sem lançar erro', () => {
@@ -164,7 +170,7 @@ describe('situação e bloco E', () => {
 });
 
 describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
-  it('8001732: Meta saúde a um passo, insumos, 12 dias → peso 61, ALTO, P1', () => {
+  it('8001732: Meta saúde a um passo, insumos, 12 dias → peso 61, ALTO, P2', () => {
     const r = avaliar({
       metas: ['saude'], etiquetas: ['CCV_Abel', 'GAB_Meta_saude'],
       assuntoPrincipal: 'Fornecimento de insumos',
@@ -173,7 +179,7 @@ describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
     expect(r.blocos).toEqual({ A: 40, B: 20, C: 1, D: 0, E: 0, F: 1 });
     expect(r.peso).toBe(61);
     expect(r.faixa).toBe('ALTO');
-    expect(r.prioridade).toBe('P1');
+    expect(r.prioridade).toBe('P2');
     expect(r.metaAUmPasso).toBe(true);
   });
 
@@ -208,11 +214,11 @@ describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
     }, new Map([['2', 50]]));
     expect(r.blocos).toEqual({ A: 26, B: 6, C: 25, D: 0, E: 10, F: 1 });
     expect(r.peso).toBe(67);
-    expect(r.prioridade).toBe('P2');
+    expect(r.prioridade).toBe('P1');
     expect(r.flags).toContain(FLAGS.TEMPO_MORTO_INTERNO);
   });
 
-  it('processo comum sem etiqueta CCV → peso 7, NORMAL, P4', () => {
+  it('processo comum sem etiqueta CCV → peso 7, NORMAL, P3', () => {
     const r = avaliar({
       assuntoPrincipal: 'Indenização por Dano Moral',
       diasParados: 20, anoCnj: 2025, tarefas: ['Processo com prazo em curso'],
@@ -221,7 +227,15 @@ describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
     expect(r.blocos).toEqual({ A: 0, B: 6, C: 0, D: 1, E: 0, F: 1 });
     expect(r.peso).toBe(7);
     expect(r.faixa).toBe('NORMAL');
-    expect(r.prioridade).toBe('P4');
+    expect(r.prioridade).toBe('P3');
+  });
+
+  it('prioridade: > 30 dias é P1 mesmo sem meta; meta recente é P2; resto é P3', () => {
+    expect(avaliar({ diasParados: 31 }).prioridade).toBe('P1');
+    expect(avaliar({ diasParados: 31, metas: ['saude'], etiquetas: ['GAB_Meta_saude'] }).prioridade).toBe('P1');
+    expect(avaliar({ diasParados: 30, metas: ['saude'], etiquetas: ['GAB_Meta_saude'] }).prioridade).toBe('P2');
+    expect(avaliar({ diasParados: 30 }).prioridade).toBe('P3');
+    expect(avaliar({ diasParados: null }).prioridade).toBe('P3');
   });
 
   it('GAB_nao trabalhar não pontua como GAB e marca BLOQUEADO', () => {
@@ -251,20 +265,20 @@ describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
   });
 });
 
-describe('ordenarPorPrioridade', () => {
-  it('P1 sempre antes de P2 mesmo com peso menor; dentro da prioridade, peso desc', () => {
-    const p1 = procBase({ numeroProcesso: 'A', prioridade: 'P1', pontuacao: 61 });
-    const p2 = procBase({ numeroProcesso: 'B', prioridade: 'P2', pontuacao: 67 });
-    const p2b = procBase({ numeroProcesso: 'C', prioridade: 'P2', pontuacao: 80 });
-    const p4 = procBase({ numeroProcesso: 'D', prioridade: 'P4', pontuacao: 30 });
-    expect(ordenarPorPrioridade([p4, p2, p2b, p1]).map((p) => p.numeroProcesso)).toEqual(['A', 'C', 'B', 'D']);
+describe('ordenarPorDiasParados', () => {
+  it('mais dias parados primeiro, ignorando prioridade e peso', () => {
+    const a = procBase({ numeroProcesso: 'A', prioridade: 'P2', pontuacao: 90, diasParados: 5, metas: ['saude'] });
+    const b = procBase({ numeroProcesso: 'B', prioridade: 'P1', pontuacao: 10, diasParados: 90 });
+    const c = procBase({ numeroProcesso: 'C', prioridade: 'P3', pontuacao: 0, diasParados: 40 });
+    const semData = procBase({ numeroProcesso: 'D', diasParados: null });
+    expect(ordenarPorDiasParados([a, semData, c, b]).map((p) => p.numeroProcesso)).toEqual(['B', 'C', 'A', 'D']);
   });
 
-  it('desempata por dias desc, depois ano asc, depois número', () => {
-    const a = procBase({ numeroProcesso: 'A', pontuacao: 10, diasParados: 5, anoCnj: 2020 });
-    const b = procBase({ numeroProcesso: 'B', pontuacao: 10, diasParados: 90, anoCnj: 2024 });
-    const c = procBase({ numeroProcesso: 'C', pontuacao: 10, diasParados: 5, anoCnj: 2010 });
-    expect(ordenarPorPrioridade([a, b, c]).map((p) => p.numeroProcesso)).toEqual(['B', 'C', 'A']);
+  it('empate nos dias: processo de meta vem antes; depois peso desc, ano asc, número', () => {
+    const comum = procBase({ numeroProcesso: 'A', pontuacao: 80, diasParados: 40, anoCnj: 2010 });
+    const meta = procBase({ numeroProcesso: 'B', pontuacao: 10, diasParados: 40, anoCnj: 2024, metas: ['2'] });
+    const comumAntigo = procBase({ numeroProcesso: 'C', pontuacao: 80, diasParados: 40, anoCnj: 2005 });
+    expect(ordenarPorDiasParados([comum, meta, comumAntigo]).map((p) => p.numeroProcesso)).toEqual(['B', 'C', 'A']);
   });
 });
 

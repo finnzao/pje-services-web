@@ -1,5 +1,5 @@
 import type {
-  ConfigPeso, GerarPlanilhaDigitoDTO,
+  ConfigPeso, GerarPlanilhaDigitoDTO, ModoDigito,
   PlanilhaDigitoProgress, PlanilhaDigitoResumo, ProcessoDigito,
 } from '../../../../shared/types';
 import { pjeApiGet, pjeApiPost, type PjeSession } from '../../../../shared/pje-api-client';
@@ -10,7 +10,7 @@ import {
 import {
   CONFIG_PESO_PADRAO, FLAGS,
   avaliarProcesso, calcularDiasParados, distribuirPorServidor, extrairDigito,
-  metasDoProcesso, montarMapaAtribuicoes, ordenarPorPrioridade,
+  metasDoProcesso, montarMapaAtribuicoes, ordenarPorDiasParados,
   selecionarTarefas,
 } from './digito-core';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
@@ -88,6 +88,7 @@ export class PlanilhaDigitoService {
 
     try {
       const pesos: ConfigPeso = { ...CONFIG_PESO_PADRAO, ...(dto.pesos ?? {}) };
+      const modoDigito: ModoDigito = dto.modoDigito ?? 'sequencial';
       const mapa = montarMapaAtribuicoes(dto.atribuicoes);
 
       const session = await resolveSessionFromDto(dto);
@@ -131,7 +132,7 @@ export class PlanilhaDigitoService {
       });
 
       const agora = new Date();
-      const processos = await this.enriquecerParalelo(session, registros, jobId, agora, pesos, (feitos, atual) => {
+      const processos = await this.enriquecerParalelo(session, registros, jobId, agora, pesos, modoDigito, (feitos, atual) => {
         emit({
           status: 'enriching',
           progress: 30 + Math.round((feitos / registros.length) * 60),
@@ -158,16 +159,18 @@ export class PlanilhaDigitoService {
       for (const proc of processos) this.aplicarAvaliacao(proc, metasRestantes, pesos);
 
       for (const [servidor, lista] of distribuicao.porServidor) {
-        distribuicao.porServidor.set(servidor, ordenarPorPrioridade(lista));
+        distribuicao.porServidor.set(servidor, ordenarPorDiasParados(lista));
       }
-      distribuicao.naoAtribuidos = ordenarPorPrioridade(distribuicao.naoAtribuidos);
+      distribuicao.naoAtribuidos = ordenarPorDiasParados(distribuicao.naoAtribuidos);
 
       const digitosPorServidor = new Map<string, number[]>();
       for (const [digito, servidor] of [...mapa.entries()].sort((a, b) => a[0] - b[0])) {
         digitosPorServidor.set(servidor, [...(digitosPorServidor.get(servidor) ?? []), digito]);
       }
 
-      const { fileName } = await gerarSaidaDigito(distribuicao, digitosPorServidor, dto.formato, jobId, pesos, metasRestantes);
+      const { fileName } = await gerarSaidaDigito(
+        distribuicao, digitosPorServidor, dto.formato, jobId, pesos, metasRestantes, dto.reduzida === true, modoDigito,
+      );
 
       const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa, metasRestantes, pesos, processos);
       emit({
@@ -257,6 +260,7 @@ export class PlanilhaDigitoService {
     jobId: string,
     agora: Date,
     pesos: ConfigPeso,
+    modoDigito: ModoDigito,
     onProgress: (feitos: number, atual: string) => void,
   ): Promise<ProcessoDigito[]> {
     const resultados: ProcessoDigito[] = new Array<ProcessoDigito>(registros.length);
@@ -307,7 +311,7 @@ export class PlanilhaDigitoService {
         }
         if (!dataMovimento) semData++;
 
-        resultados[idx] = this.montarProcesso(registro, dataMovimento, agora, pesos);
+        resultados[idx] = this.montarProcesso(registro, dataMovimento, agora, pesos, modoDigito);
         feitos++;
         onProgress(feitos, registro.numeroProcesso);
       }
@@ -325,7 +329,7 @@ export class PlanilhaDigitoService {
 
     // Slots não processados (cancelamento no meio do lote) ainda entram na planilha.
     for (let i = 0; i < registros.length; i++) {
-      if (!resultados[i]) resultados[i] = this.montarProcesso(registros[i], undefined, agora, pesos);
+      if (!resultados[i]) resultados[i] = this.montarProcesso(registros[i], undefined, agora, pesos, modoDigito);
     }
     return resultados;
   }
@@ -335,8 +339,9 @@ export class PlanilhaDigitoService {
     dataMovimento: string | undefined,
     agora: Date,
     pesos: ConfigPeso,
+    modoDigito: ModoDigito,
   ): ProcessoDigito {
-    const { digito, ano } = extrairDigito(registro.numeroProcesso);
+    const { digito, ano } = extrairDigito(registro.numeroProcesso, modoDigito);
     const flags: string[] = [];
 
     // Sem última movimentação disponível, os dias contam da chegada na tarefa
@@ -367,7 +372,7 @@ export class PlanilhaDigitoService {
       metaAUmPasso: false,
       situacao: 'TRABALHAVEL',
       bloqueado: false,
-      prioridade: 'P4',
+      prioridade: 'P3',
       pontuacao: 0,
       faixa: 'NORMAL',
       blocos: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 1 },

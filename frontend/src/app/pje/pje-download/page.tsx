@@ -312,7 +312,16 @@ export default function PaginaDownloadPJE() {
         setErro('Resposta inesperada.');
       }
     } catch (err: any) {
-      setErro(extrairMensagemErro(err));
+      const msg = extrairMensagemErro(err);
+      // Sessão do 2FA morreu no servidor: não adianta insistir no código, volta ao login.
+      if (/expirad/i.test(msg)) {
+        addLog('warn', '2FA', 'Sessão 2FA expirada — voltando ao login');
+        setSessao({ autenticado: false });
+        setEtapa('login');
+        setErro('Sessão 2FA expirada. Faça login novamente.');
+        return;
+      }
+      setErro(msg);
     } finally {
       setCarregando(false);
     }

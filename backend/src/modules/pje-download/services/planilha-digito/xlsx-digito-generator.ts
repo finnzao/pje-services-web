@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
-import type { ConfigPeso, FaixaPeso, ProcessoDigito } from '../../../../shared/types';
+import type { ConfigPeso, FaixaPeso, ModoDigito, ProcessoDigito } from '../../../../shared/types';
 import { XLSX_THIN_BORDER } from '../xlsx-common';
 import type { ResultadoDistribuicao } from './digito-core';
 import { FLAGS } from './digito-core';
@@ -31,8 +31,7 @@ const COR = {
   diasCritico: 'FFE06666',
   p1: 'FFF4B6B6',
   p2: 'FFFAD7A0',
-  p3: 'FFFFF2A8',
-  p4: 'FFD9EAD3',
+  p3: 'FFD9EAD3',
   situacaoFila: 'FFCFE2F3',
   situacaoTrabalhavel: 'FFE2EFDA',
 } as const;
@@ -45,10 +44,9 @@ const FONTE_CABECALHO: Partial<ExcelJS.Font> = { name: 'Arial', size: 10, bold: 
 type Prioridade = ProcessoDigito['prioridade'];
 
 const ESTILO_PRIORIDADE: Record<Prioridade, { fill: ExcelJS.Fill; font: Partial<ExcelJS.Font>; rotulo: string }> = {
-  P1: { fill: solid(COR.p1), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF9C0006' } }, rotulo: 'P1 Meta a um passo' },
+  P1: { fill: solid(COR.p1), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF9C0006' } }, rotulo: 'P1 Parado' },
   P2: { fill: solid(COR.p2), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF7F4F00' } }, rotulo: 'P2 GAB/Meta' },
-  P3: { fill: solid(COR.p3), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF7F6000' } }, rotulo: 'P3 Tempo morto' },
-  P4: { fill: solid(COR.p4), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF375623' } }, rotulo: 'P4 Normal' },
+  P3: { fill: solid(COR.p3), font: { ...FONTE_BASE, bold: true, color: { argb: 'FF375623' } }, rotulo: 'P3 Normal' },
 };
 
 const ESTILO_FAIXA: Record<FaixaPeso, { fill: ExcelJS.Fill; font: Partial<ExcelJS.Font>; rotulo: string }> = {
@@ -93,7 +91,15 @@ function rotuloMeta(meta: string): string {
   return /^meta/i.test(meta) ? meta : `Meta ${meta}`;
 }
 
-function colunasBase(): ColunaDef[] {
+function colunasBase(reduzida: boolean): ColunaDef[] {
+  if (reduzida) {
+    return [
+      { titulo: 'Número do processo', largura: 26, valor: (p) => p.numeroProcesso },
+      { titulo: 'Dígito', largura: 7, valor: (p) => p.digito ?? '—' },
+      { titulo: 'Etiquetas', largura: 45, valor: (p) => p.etiquetas.join(', ') },
+      { titulo: 'Dias parados', largura: 10, valor: (p) => p.diasParados ?? '—' },
+    ];
+  }
   return [
     { titulo: 'Número do processo', largura: 26, valor: (p) => p.numeroProcesso },
     { titulo: 'Dígito', largura: 7, valor: (p) => p.digito ?? '—' },
@@ -110,8 +116,8 @@ function colunasBase(): ColunaDef[] {
   ];
 }
 
-function colunasDaVariante(variante: VarianteSheet): ColunaDef[] {
-  const base = colunasBase();
+function colunasDaVariante(variante: VarianteSheet, reduzida: boolean): ColunaDef[] {
+  const base = colunasBase(reduzida);
   if (variante === 'fila') {
     return [{ titulo: 'Servidor', largura: 16, valor: (p) => p.servidor ?? '—' }, ...base];
   }
@@ -138,10 +144,11 @@ interface SheetOpts {
   titulo: string;
   pesos: ConfigPeso;
   variante: VarianteSheet;
+  reduzida: boolean;
 }
 
 function popularSheetDigito(ws: ExcelJS.Worksheet, processos: ProcessoDigito[], opts: SheetOpts): void {
-  const colunas = colunasDaVariante(opts.variante);
+  const colunas = colunasDaVariante(opts.variante, opts.reduzida);
   ws.columns = colunas.map((c) => ({ width: c.largura }));
   const { pesos } = opts;
 
@@ -152,13 +159,13 @@ function popularSheetDigito(ws: ExcelJS.Worksheet, processos: ProcessoDigito[], 
 
   const legenda = ws.getCell(2, 1);
   legenda.value =
-    'Prioridade: P1 = Meta a um passo de zerar · P2 = etiqueta de Meta/GAB · '
-    + `P3 = tempo morto > ${pesos.limiarTempoMortoInterno} dias · P4 = andamento normal. `
+    `Prioridade: P1 = parado há mais de ${pesos.limiarDiasP1} dias (com ou sem meta) · `
+    + 'P2 = etiqueta de Meta/GAB · P3 = andamento normal. '
     + 'Peso = (Meta + Assunto + Tempo + Rastro BI + Proximidade da baixa) × Situação, de 0 a 100 — '
     + `CRÍTICO ≥ ${pesos.limiarCritico} · ALTO ≥ ${pesos.limiarAlto} · MÉDIO ≥ ${pesos.limiarMedio}. `
     + (opts.variante === 'fila'
       ? `Fila de espera: o cartório não pode trabalhar — acompanhar/cobrar terceiro (peso × ${pesos.multiplicadorFilaEspera}).`
-      : 'Ordem: prioridade, depois peso, depois dias parados.');
+      : 'Ordem: mais dias parados primeiro; em empate, processo de meta vem antes.');
   legenda.font = FONTE_LEGENDA;
   legenda.alignment = { wrapText: true, vertical: 'top' };
   ws.mergeCells(2, 1, 2, colunas.length);
@@ -166,10 +173,9 @@ function popularSheetDigito(ws: ExcelJS.Worksheet, processos: ProcessoDigito[], 
 
   // Linha 3: legenda de cores em células coloridas (como na planilha da unidade).
   const chips: Array<{ texto: string; fill: ExcelJS.Fill; font: Partial<ExcelJS.Font> }> = [
-    { texto: ESTILO_PRIORIDADE.P1.rotulo, fill: ESTILO_PRIORIDADE.P1.fill, font: ESTILO_PRIORIDADE.P1.font },
+    { texto: `${ESTILO_PRIORIDADE.P1.rotulo} >${pesos.limiarDiasP1}d`, fill: ESTILO_PRIORIDADE.P1.fill, font: ESTILO_PRIORIDADE.P1.font },
     { texto: ESTILO_PRIORIDADE.P2.rotulo, fill: ESTILO_PRIORIDADE.P2.fill, font: ESTILO_PRIORIDADE.P2.font },
-    { texto: `${ESTILO_PRIORIDADE.P3.rotulo} >${pesos.limiarTempoMortoInterno}d`, fill: ESTILO_PRIORIDADE.P3.fill, font: ESTILO_PRIORIDADE.P3.font },
-    { texto: ESTILO_PRIORIDADE.P4.rotulo, fill: ESTILO_PRIORIDADE.P4.fill, font: ESTILO_PRIORIDADE.P4.font },
+    { texto: ESTILO_PRIORIDADE.P3.rotulo, fill: ESTILO_PRIORIDADE.P3.fill, font: ESTILO_PRIORIDADE.P3.font },
     { texto: `Dias: laranja >${pesos.limiarTempoMortoCnj} · vermelho >${pesos.limiarTempoMortoInterno}`, fill: solid(COR.diasAlerta), font: { ...FONTE_BASE, bold: true } },
     { texto: 'Meta afetada', fill: solid(COR.meta), font: { ...FONTE_BASE, bold: true } },
     { texto: 'Validação BI (flag)', fill: solid(COR.alertaFlag), font: { ...FONTE_BASE, bold: true } },
@@ -213,14 +219,19 @@ function popularSheetDigito(ws: ExcelJS.Worksheet, processos: ProcessoDigito[], 
       if (p.diasParados > pesos.limiarTempoMortoInterno) { diasCell.fill = solid(COR.diasCritico); diasCell.font = { ...FONTE_BASE, bold: true }; }
       else if (p.diasParados > pesos.limiarTempoMortoCnj) { diasCell.fill = solid(COR.diasAlerta); diasCell.font = { ...FONTE_BASE, bold: true }; }
     }
-    row.getCell(idxPrioridade).font = tinta.font;
-    row.getCell(idxPrioridade).alignment = { horizontal: 'center', vertical: 'top' };
-    if (p.metas.length > 0) row.getCell(idxMeta).fill = solid(COR.meta);
-    if (p.flags.length > 0) row.getCell(idxFlags).fill = solid(COR.alertaFlag);
-    const faixaCell = row.getCell(idxFaixa);
-    faixaCell.fill = ESTILO_FAIXA[p.faixa].fill;
-    faixaCell.font = ESTILO_FAIXA[p.faixa].font;
-    faixaCell.alignment = { horizontal: 'center', vertical: 'top' };
+    // Na planilha reduzida essas colunas não existem (idx 0).
+    if (idxPrioridade > 0) {
+      row.getCell(idxPrioridade).font = tinta.font;
+      row.getCell(idxPrioridade).alignment = { horizontal: 'center', vertical: 'top' };
+    }
+    if (idxMeta > 0 && p.metas.length > 0) row.getCell(idxMeta).fill = solid(COR.meta);
+    if (idxFlags > 0 && p.flags.length > 0) row.getCell(idxFlags).fill = solid(COR.alertaFlag);
+    if (idxFaixa > 0) {
+      const faixaCell = row.getCell(idxFaixa);
+      faixaCell.fill = ESTILO_FAIXA[p.faixa].fill;
+      faixaCell.font = ESTILO_FAIXA[p.faixa].font;
+      faixaCell.alignment = { horizontal: 'center', vertical: 'top' };
+    }
     if (idxSituacao > 0) {
       row.getCell(idxSituacao).fill = solid(p.situacao === 'FILA_ESPERA' ? COR.situacaoFila : COR.situacaoTrabalhavel);
     }
@@ -241,16 +252,23 @@ export interface DadosResumoDigito {
   /** Meta (nome normalizado) → processos restantes no acervo analisado. */
   metasRestantes: Map<string, number>;
   pesos: ConfigPeso;
+  modoDigito: ModoDigito;
 }
 
-const LARGURAS_RESUMO = [52, 18, 22, 30, 22, 60, 14, 22, 18, 14];
+const DESCRICAO_MODO_DIGITO: Record<ModoDigito, string> = {
+  sequencial: 'último algarismo do sequencial do número CNJ (antes do hífen)',
+  verificador1: '1º algarismo do verificador do número CNJ (logo após o hífen)',
+  verificador2: '2º algarismo do verificador do número CNJ (após o hífen)',
+};
+
+const LARGURAS_RESUMO = [52, 18, 22, 30, 22, 60, 22, 18, 14];
 
 function contarFlag(processos: ProcessoDigito[], flag: string): number {
   return processos.filter((p) => p.flags.includes(flag)).length;
 }
 
 function popularSheetResumo(ws: ExcelJS.Worksheet, dados: DadosResumoDigito): void {
-  const { distribuicao, digitosPorServidor, metasRestantes, pesos } = dados;
+  const { distribuicao, digitosPorServidor, metasRestantes, pesos, modoDigito } = dados;
   ws.columns = LARGURAS_RESUMO.map((width) => ({ width }));
   const NCOLS = LARGURAS_RESUMO.length;
 
@@ -314,20 +332,20 @@ function popularSheetResumo(ws: ExcelJS.Worksheet, dados: DadosResumoDigito): vo
 
   // 2. Totais por servidor (trabalháveis)
   secao('2. Totais por servidor (trabalháveis)');
-  cabecalho(['Servidor', 'Dígitos', 'Trabalháveis', 'Prioridade 1', 'Prioridade 2', 'Prioridade 3', 'Prioridade 4', 'Em fila de espera', 'Crítico (peso)', 'Alto (peso)']);
-  const soma = { trab: 0, p1: 0, p2: 0, p3: 0, p4: 0, fila: 0, critico: 0, alto: 0 };
-  const fillsServidor = [COR.servidor, undefined, COR.trabalhaveis, COR.p1, COR.p2, COR.p3, COR.p4, COR.filaEspera, undefined, undefined];
+  cabecalho(['Servidor', 'Dígitos', 'Trabalháveis', 'Prioridade 1', 'Prioridade 2', 'Prioridade 3', 'Em fila de espera', 'Crítico (peso)', 'Alto (peso)']);
+  const soma = { trab: 0, p1: 0, p2: 0, p3: 0, fila: 0, critico: 0, alto: 0 };
+  const fillsServidor = [COR.servidor, undefined, COR.trabalhaveis, COR.p1, COR.p2, COR.p3, COR.filaEspera, undefined, undefined];
   for (const [servidor, lista] of distribuicao.porServidor) {
     const trab = lista.filter((p) => p.situacao === 'TRABALHAVEL');
     const conta = (pr: Prioridade) => trab.filter((p) => p.prioridade === pr).length;
     const fila = lista.length - trab.length;
     const critico = trab.filter((p) => p.faixa === 'CRITICO').length;
     const alto = trab.filter((p) => p.faixa === 'ALTO').length;
-    const [p1, p2, p3, p4] = [conta('P1'), conta('P2'), conta('P3'), conta('P4')];
-    soma.trab += trab.length; soma.p1 += p1; soma.p2 += p2; soma.p3 += p3; soma.p4 += p4;
+    const [p1, p2, p3] = [conta('P1'), conta('P2'), conta('P3')];
+    soma.trab += trab.length; soma.p1 += p1; soma.p2 += p2; soma.p3 += p3;
     soma.fila += fila; soma.critico += critico; soma.alto += alto;
     linhaDado(
-      [servidor, (digitosPorServidor.get(servidor) ?? []).join(', '), trab.length, p1, p2, p3, p4, fila, critico, alto],
+      [servidor, (digitosPorServidor.get(servidor) ?? []).join(', '), trab.length, p1, p2, p3, fila, critico, alto],
       fillsServidor,
     );
   }
@@ -335,14 +353,14 @@ function popularSheetResumo(ws: ExcelJS.Worksheet, dados: DadosResumoDigito): vo
     const trabNA = distribuicao.naoAtribuidos.filter((p) => p.situacao === 'TRABALHAVEL');
     const conta = (pr: Prioridade) => trabNA.filter((p) => p.prioridade === pr).length;
     linhaDado(
-      ['(não atribuídos)', '—', trabNA.length, conta('P1'), conta('P2'), conta('P3'), conta('P4'),
+      ['(não atribuídos)', '—', trabNA.length, conta('P1'), conta('P2'), conta('P3'),
         distribuicao.naoAtribuidos.length - trabNA.length,
         trabNA.filter((p) => p.faixa === 'CRITICO').length, trabNA.filter((p) => p.faixa === 'ALTO').length],
       Array(NCOLS).fill(COR.cinza),
     );
   }
   linhaDado(
-    ['TOTAL (atribuídos)', '', soma.trab, soma.p1, soma.p2, soma.p3, soma.p4, soma.fila, soma.critico, soma.alto],
+    ['TOTAL (atribuídos)', '', soma.trab, soma.p1, soma.p2, soma.p3, soma.fila, soma.critico, soma.alto],
     Array(NCOLS).fill(COR.totalLinha), true,
   );
   linha++;
@@ -396,9 +414,9 @@ function popularSheetResumo(ws: ExcelJS.Worksheet, dados: DadosResumoDigito): vo
   metodo.font = { ...FONTE_BASE, bold: true };
   linha++;
   const notas = [
-    'Dígito = último algarismo do sequencial do número CNJ (antes do primeiro hífen); processo cujo dígito não tem servidor vai para "Não atribuídos".',
+    `Dígito = ${DESCRICAO_MODO_DIGITO[modoDigito]}; processo cujo dígito não tem servidor vai para "Não atribuídos".`,
     `Dias parados = dias desde a última movimentação (fallback: chegada na tarefa, sinalizado por SEM_ULTIMO_MOVIMENTO). Réguas: CNJ > ${pesos.limiarTempoMortoCnj} · interna > ${pesos.limiarTempoMortoInterno}.`,
-    `Prioridade: P1 = Meta a um passo (≤ ${pesos.limiarMetaAUmPasso} restantes) · P2 = etiqueta Meta/GAB · P3 = tempo morto > ${pesos.limiarTempoMortoInterno} dias · P4 = normal. Peso 0–100 por blocos A–F.`,
+    `Prioridade: P1 = parado > ${pesos.limiarDiasP1} dias (com ou sem meta) · P2 = etiqueta Meta/GAB · P3 = normal. Peso 0–100 por blocos A–F.`,
     'Fila de espera = tarefa em que o cartório não pode atuar (aguardando terceiro); esses processos ficam fora da aba do servidor e entram em "Filas de espera".',
     'Metas: etiquetas com prefixo de meta (ex.: GAB_Meta_2, ACV_Meta 2) agrupadas na mesma Meta; "restantes" conta o acervo analisado neste job.',
   ];
@@ -447,6 +465,8 @@ export async function gerarSaidaDigito(
   jobId: string,
   pesos: ConfigPeso,
   metasRestantes: Map<string, number> = new Map(),
+  reduzida = false,
+  modoDigito: ModoDigito = 'sequencial',
 ): Promise<GeracaoDigitoResult> {
   if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -457,7 +477,7 @@ export async function gerarSaidaDigito(
   const filasEspera = [...distribuicao.porServidor.values()]
     .flat()
     .filter((p) => p.situacao === 'FILA_ESPERA');
-  const dadosResumo: DadosResumoDigito = { distribuicao, digitosPorServidor, metasRestantes, pesos };
+  const dadosResumo: DadosResumoDigito = { distribuicao, digitosPorServidor, metasRestantes, pesos, modoDigito };
 
   if (formato === 'xlsx') {
     const wb = novoWorkbook();
@@ -470,14 +490,14 @@ export async function gerarSaidaDigito(
       const ws = wb.addWorksheet(nome);
       popularSheetDigito(ws, trabalhaveis, {
         titulo: tituloServidor(servidor, digitosPorServidor.get(servidor) ?? []),
-        pesos, variante: 'servidor',
+        pesos, variante: 'servidor', reduzida,
       });
     }
     if (filasEspera.length > 0) {
-      popularSheetDigito(wb.addWorksheet('Filas de espera'), filasEspera, { titulo: TITULO_FILAS, pesos, variante: 'fila' });
+      popularSheetDigito(wb.addWorksheet('Filas de espera'), filasEspera, { titulo: TITULO_FILAS, pesos, variante: 'fila', reduzida });
     }
     if (distribuicao.naoAtribuidos.length > 0) {
-      popularSheetDigito(wb.addWorksheet('Não atribuídos'), distribuicao.naoAtribuidos, { titulo: TITULO_NAO_ATRIBUIDOS, pesos, variante: 'nao_atribuidos' });
+      popularSheetDigito(wb.addWorksheet('Não atribuídos'), distribuicao.naoAtribuidos, { titulo: TITULO_NAO_ATRIBUIDOS, pesos, variante: 'nao_atribuidos', reduzida });
     }
     const fileName = `planilha_digito_${jobId}.xlsx`;
     const filePath = path.join(OUTPUT_DIR, fileName);
@@ -495,7 +515,7 @@ export async function gerarSaidaDigito(
   };
   const adicionar = async (nomeBase: string, processos: ProcessoDigito[], titulo: string, variante: VarianteSheet) => {
     const wb = novoWorkbook();
-    popularSheetDigito(wb.addWorksheet(sanitizeSheetName(nomeBase)), processos, { titulo, pesos, variante });
+    popularSheetDigito(wb.addWorksheet(sanitizeSheetName(nomeBase)), processos, { titulo, pesos, variante, reduzida });
     zip.file(nomeArquivoLivre(nomeBase), await wb.xlsx.writeBuffer());
   };
 
