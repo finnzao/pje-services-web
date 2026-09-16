@@ -192,9 +192,14 @@ function sanitizeLabel(label: string): string {
     .slice(0, 50);
 }
 
+const CANCEL_GRACE_MS = 20000;
+
 export class PlanilhaPesquisaManager {
   private es: EventSource | null = null;
   private cancelRequested = false;
+  private cancelPendingStreamId = false;
+  private cancelGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  private forceStopHandler: (() => void) | null = null;
   private serverCancelled = false;
   private settled = false;
   private rows: SearchResultRow[] = [];
@@ -205,20 +210,48 @@ export class PlanilhaPesquisaManager {
   get isRunning(): boolean { return this.es !== null; }
 
   async cancel(): Promise<void> {
-    if (this.cancelRequested) return;
+    if (!this.isRunning) return;
+
+    if (this.cancelRequested) {
+      this.forceStop();
+      return;
+    }
+
     this.cancelRequested = true;
+    this.cancelGraceTimer = setTimeout(() => this.forceStop(), CANCEL_GRACE_MS);
+
     if (this.streamId) {
-      try {
-        await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
-          method: 'POST',
-          keepalive: true,
-        });
-      } catch {  }
+      await this.notifyServerCancel();
+    } else {
+      this.cancelPendingStreamId = true;
+    }
+  }
+
+  private async notifyServerCancel(): Promise<void> {
+    if (!this.streamId) return;
+    try {
+      await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
+        method: 'POST',
+        keepalive: true,
+      });
+    } catch {  }
+  }
+
+  private forceStop(): void {
+    this.clearCancelGrace();
+    this.forceStopHandler?.();
+  }
+
+  private clearCancelGrace(): void {
+    if (this.cancelGraceTimer) {
+      clearTimeout(this.cancelGraceTimer);
+      this.cancelGraceTimer = null;
     }
   }
 
   execute(params: PlanilhaPesquisaParams, onProgress: PesquisaProgressCallback): Promise<void> {
     this.cancelRequested = false;
+    this.cancelPendingStreamId = false;
     this.serverCancelled = false;
     this.settled = false;
     this.rows = [];
@@ -244,13 +277,31 @@ export class PlanilhaPesquisaManager {
       const es = new EventSource(url.toString());
       this.es = es;
 
-      const close = () => { if (this.es) { this.es.close(); this.es = null; } };
+      const close = () => {
+        this.clearCancelGrace();
+        this.forceStopHandler = null;
+        if (this.es) { this.es.close(); this.es = null; }
+      };
+
+      this.forceStopHandler = () => {
+        if (this.settled) return;
+        this.settled = true;
+        close();
+        progress.phase = 'cancelled';
+        progress.message = `Pesquisa interrompida (${this.rows.length} processo(s) coletado(s)).`;
+        onProgress({ ...progress, rows: [...this.rows] });
+        resolve();
+      };
 
       es.addEventListener('init', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
           if (data?.streamId) this.streamId = data.streamId;
         } catch {  }
+        if (this.cancelPendingStreamId && this.streamId) {
+          this.cancelPendingStreamId = false;
+          void this.notifyServerCancel();
+        }
       });
 
       es.addEventListener('listing', (e: MessageEvent) => {
@@ -285,6 +336,7 @@ export class PlanilhaPesquisaManager {
 
       es.addEventListener('cancelled', () => {
         this.serverCancelled = true;
+        this.clearCancelGrace();
         progress.phase = 'cancelling';
         progress.message = 'Cancelamento confirmado pelo servidor. Finalizando...';
         onProgress({ ...progress, rows: [...this.rows] });

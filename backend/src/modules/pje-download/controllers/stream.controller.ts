@@ -20,6 +20,7 @@ import {
   RESULTS_PER_PAGE, MAX_RESULTS,
 } from '../services/download/consulta-publica';
 import type { PesquisaProcessoCriteria } from '../../../shared/types';
+import { requestSignal, sleep } from '../../../shared/abortable';
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const CORS_ORIGIN = IS_PRODUCTION ? 'https://pje-services-web-frontend.vercel.app' : '*';
@@ -35,16 +36,14 @@ const DOWNLOAD_AVAILABLE_STATUSES = ['S', 'DISPONIVEL', 'AVAILABLE'];
 const activeStreams = new Map<string, { count: number; startedAt: number }>();
 const streamRegistry = new Map<string, { cancel: () => void }>();
 
-function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
-
-async function fetchReadyDownloads(session: any): Promise<Map<string, string>> {
+async function fetchReadyDownloads(session: any, signal?: AbortSignal): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
     const cookieStr = serializeCookies(session.cookies, 'pje.tjba.jus.br');
     const headers = { ...buildPjeHeaders(session), Cookie: cookieStr };
     const userId = session.idUsuario || session.idUsuarioLocalizacao;
     const url = `${PJE_REST_BASE}/pjedocs-api/v1/downloadService/recuperarDownloadsDisponiveis?idUsuario=${userId}&sistemaOrigem=PRIMEIRA_INSTANCIA`;
-    const res = await fetch(url, { method: 'GET', headers });
+    const res = await fetch(url, { method: 'GET', headers, signal: requestSignal(signal) });
     if (!res.ok) return map;
     const data = await res.json() as any;
     for (const dl of data?.downloadsDisponiveis || []) {
@@ -63,12 +62,12 @@ async function fetchReadyDownloads(session: any): Promise<Map<string, string>> {
   return map;
 }
 
-async function resolveReadyUrl(session: any, hashDownload: string): Promise<string | null> {
+async function resolveReadyUrl(session: any, hashDownload: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const cookieStr = serializeCookies(session.cookies, 'pje.tjba.jus.br');
     const headers = { ...buildPjeHeaders(session), Cookie: cookieStr };
     const url = `${PJE_REST_BASE}/pjedocs-api/v2/repositorio/gerar-url-download?hashDownload=${encodeURIComponent(hashDownload)}`;
-    const res = await fetch(url, { method: 'GET', headers });
+    const res = await fetch(url, { method: 'GET', headers, signal: requestSignal(signal) });
     if (!res.ok) return null;
     const t = await res.text();
     return t ? t.replace(/^"|"$/g, '').trim() : null;
@@ -123,6 +122,10 @@ async function processOneRequest(
       documentType: isAllTypes ? undefined : documentTypeName,
     });
 
+    if (cancelled()) {
+      return { processNumber: proc.numeroProcesso, type: 'error', documentType: documentTypeName };
+    }
+
     if (result.type === 'direct' && result.url) {
       const proxyToken = registerProxyUrl(result.url, proc.numeroProcesso);
       const proxyUrl = `/api/pje/downloads/proxy/${proxyToken}`;
@@ -167,13 +170,15 @@ async function processOneRequest(
     });
     return { processNumber: proc.numeroProcesso, type: 'error', documentType: documentTypeName };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Erro';
-    send('item_error', {
-      processNumber: proc.numeroProcesso,
-      documentType: isAllTypes ? null : documentTypeName,
-      message: msg,
-      code: 'UNEXPECTED',
-    });
+    if (!cancelled()) {
+      const msg = err instanceof Error ? err.message : 'Erro';
+      send('item_error', {
+        processNumber: proc.numeroProcesso,
+        documentType: isAllTypes ? null : documentTypeName,
+        message: msg,
+        code: 'UNEXPECTED',
+      });
+    }
     return { processNumber: proc.numeroProcesso, type: 'error', documentType: documentTypeName };
   }
 }
@@ -279,8 +284,14 @@ export async function streamRoutes(fastify: FastifyInstance) {
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
       const streamId = randomUUID();
+      const aborter = new AbortController();
       let cancelled = false;
-      streamRegistry.set(streamId, { cancel: () => { cancelled = true; } });
+      const cancelar = () => {
+        if (cancelled) return;
+        cancelled = true;
+        aborter.abort();
+      };
+      streamRegistry.set(streamId, { cancel: cancelar });
 
       reply.hijack();
       reply.raw.writeHead(200, sseHeaders());
@@ -299,12 +310,12 @@ export async function streamRoutes(fastify: FastifyInstance) {
         try { reply.raw.end(); } catch {  }
       };
 
-      request.raw.on('close', () => { cancelled = true; finalizeStream(); });
+      request.raw.on('close', () => { cancelar(); finalizeStream(); });
 
       send('init', { streamId });
 
       try {
-        const extractor = new UrlExtractor(session);
+        const extractor = new UrlExtractor(session, aborter.signal);
         send('auth', { status: 'ok', user: session.idUsuarioLocalizacao });
 
         const processNumbersArray = processNumbers
@@ -368,7 +379,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
 
         const wantsWholeProcess = tipoPares.some(([nome]) => nome === SELECIONE_SENTINEL);
         const readyMap = (wantsWholeProcess && !cancelled)
-          ? await fetchReadyDownloads(session as any)
+          ? await fetchReadyDownloads(session as any, aborter.signal)
           : new Map<string, string>();
         let readyHits = 0;
         for (const p of processos) if (readyMap.has(p.numeroProcesso.replace(/\D/g, ''))) readyHits++;
@@ -395,14 +406,15 @@ export async function streamRoutes(fastify: FastifyInstance) {
             const idx = requestIndex++;
             const readyHash = (tipoNome === SELECIONE_SENTINEL && readyMap.has(digits)) ? readyMap.get(digits) : undefined;
 
-            if (idx > 0) await sleep(readyHash ? NOS_STAGGER_MS : REQUEST_STAGGER_MS);
+            if (idx > 0) await sleep(readyHash ? NOS_STAGGER_MS : REQUEST_STAGGER_MS, aborter.signal);
             if (cancelled) break;
 
             await pool.add(async () => {
+              if (cancelled) { failed++; return; }
               if (readyHash) {
                 try {
-                  const url = await resolveReadyUrl(session as any, readyHash);
-                  if (url) {
+                  const url = await resolveReadyUrl(session as any, readyHash, aborter.signal);
+                  if (url && !cancelled) {
                     const proxyToken = registerProxyUrl(url, proc.numeroProcesso);
                     send('url', {
                       processNumber: proc.numeroProcesso,
@@ -450,8 +462,13 @@ export async function streamRoutes(fastify: FastifyInstance) {
           reused: readyHits,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Erro fatal';
-        send('fatal', { message: msg });
+        if (cancelled) {
+          send('cancelled', { reason: 'user', stage: 'listing' });
+          send('done', { total: 0, success: 0, failed: 0, queued: 0, notAvailable: 0, elapsed: 0, cancelled: true });
+        } else {
+          const msg = err instanceof Error ? err.message : 'Erro fatal';
+          send('fatal', { message: msg });
+        }
       } finally {
         finalizeStream();
       }
@@ -478,8 +495,14 @@ export async function streamRoutes(fastify: FastifyInstance) {
       activeStreams.set(userId, { count: (userEntry?.count || 0) + 1, startedAt: Date.now() });
 
       const streamId = randomUUID();
+      const aborter = new AbortController();
       let cancelled = false;
-      streamRegistry.set(streamId, { cancel: () => { cancelled = true; } });
+      const cancelar = () => {
+        if (cancelled) return;
+        cancelled = true;
+        aborter.abort();
+      };
+      streamRegistry.set(streamId, { cancel: cancelar });
 
       reply.hijack();
       reply.raw.writeHead(200, sseHeaders());
@@ -498,7 +521,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
         try { reply.raw.end(); } catch {  }
       };
 
-      request.raw.on('close', () => { cancelled = true; finalizeStream(); });
+      request.raw.on('close', () => { cancelar(); finalizeStream(); });
 
       send('init', { streamId });
 
@@ -511,10 +534,10 @@ export async function streamRoutes(fastify: FastifyInstance) {
           return;
         }
 
-        const formHtml = await consultaFetchForm(session as any);
+        const formHtml = await consultaFetchForm(session as any, aborter.signal);
         const formViewState = extractViewState(formHtml) || 'j_id38';
 
-        const firstHtml = await consultaPost(session as any, buildSearchBody(criterios, formViewState));
+        const firstHtml = await consultaPost(session as any, buildSearchBody(criterios, formViewState), aborter.signal);
         const resultsViewState = extractViewState(firstHtml) || formViewState;
         const total = Math.min(parseResultCount(firstHtml) || 0, MAX_RESULTS);
 
@@ -528,7 +551,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
         const totalPages = total > 0 ? Math.ceil(total / RESULTS_PER_PAGE) : 1;
         for (let page = 2; page <= totalPages; page++) {
           if (cancelled) break;
-          const html = await consultaPost(session as any, buildPaginationBody(criterios, resultsViewState, page));
+          const html = await consultaPost(session as any, buildPaginationBody(criterios, resultsViewState, page), aborter.signal);
           const novas = parseResultRowsFull(html).filter((r) => {
             if (!r.idProcesso || seen.has(r.idProcesso)) return false;
             seen.add(r.idProcesso);
@@ -536,7 +559,7 @@ export async function streamRoutes(fastify: FastifyInstance) {
           });
           if (novas.length === 0) break;
           linhas.push(...novas);
-          await sleep(300);
+          await sleep(300, aborter.signal);
         }
 
         send('listing', { total: linhas.length, parallelSlots: PARALLEL_SLOTS });
@@ -554,15 +577,17 @@ export async function streamRoutes(fastify: FastifyInstance) {
         for (let i = 0; i < linhas.length; i++) {
           if (cancelled) break;
           const linha = linhas[i];
-          if (i > 0) await sleep(NOS_STAGGER_MS);
+          if (i > 0) await sleep(NOS_STAGGER_MS, aborter.signal);
           if (cancelled) break;
           await pool.add(async () => {
+            if (cancelled) return;
             let noAtual = '';
             try {
               const body = buildNosAtuaisBody(criterios, resultsViewState, linha.idProcesso, linha.nosContainer, linha.nosSingle);
-              const respHtml = await consultaPost(session as any, body);
+              const respHtml = await consultaPost(session as any, body, aborter.signal);
               noAtual = parseNosAtuais(respHtml);
             } catch {  }
+            if (cancelled) return;
             emitted++;
             send('row', {
               index: emitted,
@@ -583,8 +608,13 @@ export async function streamRoutes(fastify: FastifyInstance) {
         if (cancelled) send('cancelled', { reason: 'user', stage: 'collecting' });
         send('done', { total: linhas.length, cancelled });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Erro fatal';
-        send('fatal', { message: msg });
+        if (cancelled) {
+          send('cancelled', { reason: 'user', stage: 'listing' });
+          send('done', { total: 0, cancelled: true });
+        } else {
+          const msg = err instanceof Error ? err.message : 'Erro fatal';
+          send('fatal', { message: msg });
+        }
       } finally {
         finalizeStream();
       }

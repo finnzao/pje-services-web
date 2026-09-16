@@ -1,3 +1,5 @@
+import { requestSignal } from './abortable';
+
 const PJE_BASE = 'https://pje.tjba.jus.br';
 const PJE_REST_BASE = `${PJE_BASE}/pje/seam/resource/rest/pje-legacy`;
 const PJE_FRONTEND_ORIGIN = 'https://frontend.cloud.pje.jus.br';
@@ -19,16 +21,16 @@ export function serializePjeCookies(cookies: Record<string, string>): string { r
 export function buildPjeHeaders(session: PjeSession): Record<string, string> {
   return { 'Content-Type': 'application/json', 'X-pje-legacy-app': PJE_LEGACY_APP, Origin: PJE_FRONTEND_ORIGIN, Referer: `${PJE_FRONTEND_ORIGIN}/`, 'X-pje-cookies': serializeAllCookies(session.cookies), 'X-pje-usuario-localizacao': session.idUsuarioLocalizacao };
 }
-export async function pjeApiGet<T>(session: PjeSession, endpoint: string): Promise<T> {
+export async function pjeApiGet<T>(session: PjeSession, endpoint: string, signal?: AbortSignal): Promise<T> {
   const cookieStr = serializePjeCookies(session.cookies);
-  const res = await fetch(`${PJE_REST_BASE}/${endpoint}`, { method: 'GET', headers: { ...buildPjeHeaders(session), Cookie: cookieStr } });
+  const res = await fetch(`${PJE_REST_BASE}/${endpoint}`, { method: 'GET', headers: { ...buildPjeHeaders(session), Cookie: cookieStr }, signal: requestSignal(signal) });
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('json')) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
 }
-export async function pjeApiPost<T>(session: PjeSession, endpoint: string, body: unknown): Promise<T> {
+export async function pjeApiPost<T>(session: PjeSession, endpoint: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const cookieStr = serializePjeCookies(session.cookies);
-  const res = await fetch(`${PJE_REST_BASE}/${endpoint}`, { method: 'POST', headers: { ...buildPjeHeaders(session), Cookie: cookieStr }, body: JSON.stringify(body) });
+  const res = await fetch(`${PJE_REST_BASE}/${endpoint}`, { method: 'POST', headers: { ...buildPjeHeaders(session), Cookie: cookieStr }, body: JSON.stringify(body), signal: requestSignal(signal) });
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('json')) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
@@ -40,6 +42,7 @@ export async function validatePjeSession(session: PjeSession): Promise<boolean> 
     const res = await fetch(`${PJE_REST_BASE}/usuario/currentUser`, {
       method: 'GET',
       headers: { ...buildPjeHeaders(session), Cookie: cookieStr },
+      signal: requestSignal(undefined, 20000),
     });
     if (!res.ok) return false;
     const ct = res.headers.get('content-type') || '';

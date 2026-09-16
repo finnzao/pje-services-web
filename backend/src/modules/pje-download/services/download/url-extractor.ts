@@ -9,6 +9,7 @@ import { ByTagStrategy } from './strategies/by-tag.strategy';
 import { ByNumberStrategy } from './strategies/by-number.strategy';
 import { BySearchStrategy } from './strategies/by-search.strategy';
 import type { PesquisaProcessoCriteria } from '../../../../shared/types';
+import { requestSignal, sleep } from '../../../../shared/abortable';
 
 export interface ExtractResult {
   type: 'direct' | 'queued' | 'error' | 'not_available';
@@ -42,12 +43,8 @@ const strategies: Record<string, DownloadStrategy> = {
   by_search: new BySearchStrategy(),
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 export class UrlExtractor {
-  constructor(private session: PjeSession) {}
+  constructor(private session: PjeSession, private signal?: AbortSignal) {}
 
   async listProcesses(
     mode: string,
@@ -70,7 +67,7 @@ export class UrlExtractor {
         isFavorite: params.isFavorite,
         processNumbers: params.processNumbers,
         searchCriteria: params.searchCriteria,
-      } as Record<string, unknown>, params.onCancelled);
+      } as Record<string, unknown>, params.onCancelled, this.signal);
 
       return result;
     } catch (err) {
@@ -93,6 +90,7 @@ export class UrlExtractor {
       const caRaw = await pjeApiGet<string>(
         this.session,
         `painelUsuario/gerarChaveAcessoProcesso/${idProcesso}`,
+        this.signal,
       );
       if (!caRaw || typeof caRaw !== 'string' || caRaw.length < 10) {
         return {
@@ -117,6 +115,7 @@ export class UrlExtractor {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
         redirect: 'follow',
+        signal: requestSignal(this.signal),
       });
       const autosHtml = await autosRes.text();
 
@@ -179,6 +178,7 @@ export class UrlExtractor {
           },
           body: postBody.toString(),
           redirect: 'follow',
+          signal: requestSignal(this.signal),
         },
       );
 
@@ -190,7 +190,7 @@ export class UrlExtractor {
       if (s3Match?.[1]) {
         let fileSize: number | undefined;
         try {
-          const head = await fetch(s3Match[1], { method: 'HEAD' });
+          const head = await fetch(s3Match[1], { method: 'HEAD', signal: requestSignal(this.signal, 15000) });
           const cl = head.headers.get('content-length');
           if (cl) fileSize = parseInt(cl, 10);
         } catch {  }
@@ -262,13 +262,15 @@ export class UrlExtractor {
       remaining.set(key, item);
     }
 
-    await sleep(DOWNLOAD_POLL_INITIAL);
+    const cancelado = () => isCancelled() || this.signal?.aborted === true;
+
+    await sleep(DOWNLOAD_POLL_INITIAL, this.signal);
 
     const startTime = Date.now();
     let pollCount = 0;
 
     while (remaining.size > 0 && Date.now() - startTime < DOWNLOAD_TIMEOUT) {
-      if (isCancelled()) break;
+      if (cancelado()) break;
       pollCount++;
 
       try {
@@ -298,6 +300,7 @@ export class UrlExtractor {
           }
 
           if (matchedKey && dl.hashDownload) {
+            if (cancelado()) break;
             const item = remaining.get(matchedKey)!;
             try {
               const s3Url = await this.generateS3DownloadUrl(dl.hashDownload);
@@ -314,16 +317,19 @@ export class UrlExtractor {
         }
       } catch {  }
 
-      if (remaining.size > 0) {
+      if (remaining.size > 0 && !cancelado()) {
         const delay = Math.min(10000 + pollCount * 2500, 30000);
-        await sleep(delay);
+        await sleep(delay, this.signal);
       }
     }
 
+    const motivo = cancelado()
+      ? 'Cancelado pelo usuário'
+      : `Timeout (${Math.round(DOWNLOAD_TIMEOUT / 1000)}s) aguardando download`;
     for (const [, item] of remaining) {
       results.push({
         processNumber: item.proc.numeroProcesso,
-        error: `Timeout (${Math.round(DOWNLOAD_TIMEOUT / 1000)}s) aguardando download`,
+        error: motivo,
         documentType: item.documentType,
       });
     }
@@ -352,8 +358,9 @@ export class UrlExtractor {
     ];
 
     for (const url of urls) {
+      if (this.signal?.aborted) break;
       try {
-        const res = await fetch(url, { method: 'GET', headers });
+        const res = await fetch(url, { method: 'GET', headers, signal: requestSignal(this.signal) });
         if (res.ok) {
           const data = (await res.json()) as any;
           return data?.downloadsDisponiveis || [];
@@ -374,8 +381,9 @@ export class UrlExtractor {
     ];
 
     for (const url of urls) {
+      if (this.signal?.aborted) break;
       try {
-        const res = await fetch(url, { method: 'GET', headers });
+        const res = await fetch(url, { method: 'GET', headers, signal: requestSignal(this.signal) });
         if (res.ok) {
           const s3Url = await res.text();
           return s3Url ? s3Url.replace(/^"|"$/g, '').trim() : null;

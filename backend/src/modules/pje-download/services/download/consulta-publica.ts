@@ -1,4 +1,5 @@
 import { PJE_BASE, serializeCookies, type PjeSession } from '../../../../shared/pje-api-client';
+import { requestSignal } from '../../../../shared/abortable';
 import type {
   PesquisaProcessoCriteria,
   SearchResultRow,
@@ -309,7 +310,7 @@ function consultaHeaders(session: PjeSession, referer: string): Record<string, s
   };
 }
 
-export async function consultaFetchForm(session: PjeSession): Promise<string> {
+export async function consultaFetchForm(session: PjeSession, signal?: AbortSignal): Promise<string> {
   const res = await fetch(CONSULTA_URL, {
     method: 'GET',
     headers: {
@@ -318,16 +319,18 @@ export async function consultaFetchForm(session: PjeSession): Promise<string> {
       Accept: 'text/html,application/xhtml+xml',
     },
     redirect: 'follow',
+    signal: requestSignal(signal),
   });
   return res.text();
 }
 
-export async function consultaPost(session: PjeSession, body: string): Promise<string> {
+export async function consultaPost(session: PjeSession, body: string, signal?: AbortSignal): Promise<string> {
   const res = await fetch(CONSULTA_URL, {
     method: 'POST',
     headers: consultaHeaders(session, CONSULTA_URL),
     body,
     redirect: 'follow',
+    signal: requestSignal(signal),
   });
   return res.text();
 }
@@ -335,11 +338,12 @@ export async function consultaPost(session: PjeSession, body: string): Promise<s
 export async function buscarProcessoPorNumero(
   session: PjeSession,
   numero: string,
+  signal?: AbortSignal,
 ): Promise<{ idProcesso: number; numeroProcesso: string } | null> {
   const partes = decomposeCNJ(numero);
   if (!partes) return null;
 
-  const formHtml = await consultaFetchForm(session);
+  const formHtml = await consultaFetchForm(session, signal);
   const viewState = extractViewState(formHtml);
   if (!viewState) return null;
 
@@ -351,7 +355,7 @@ export async function buscarProcessoPorNumero(
     numeroOrgao: partes.numeroOrgao,
   };
 
-  const html = await consultaPost(session, buildSearchBody(criteria, viewState));
+  const html = await consultaPost(session, buildSearchBody(criteria, viewState), signal);
   const rows = parseResultRowsFull(html);
   if (rows.length === 0) return null;
 

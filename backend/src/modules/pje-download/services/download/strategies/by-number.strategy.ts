@@ -57,6 +57,7 @@ export class ByNumberStrategy implements DownloadStrategy {
     session: PjeSession,
     params: Record<string, unknown>,
     onCancelled: () => boolean,
+    signal?: AbortSignal,
   ): Promise<ProcessoInfo[]> {
     const raw: string[] = (params.processNumbers as string[]) || [];
     if (raw.length === 0) return [];
@@ -78,11 +79,11 @@ export class ByNumberStrategy implements DownloadStrategy {
     for (const numero of numeros) {
       if (onCancelled()) break;
 
-      let encontrado = await this.descobrirProcesso(session, numero);
+      let encontrado = await this.descobrirProcesso(session, numero, onCancelled, signal);
 
-      if (!encontrado) {
+      if (!encontrado && !onCancelled()) {
         try {
-          const viaPesquisa = await buscarProcessoPorNumero(session, numero);
+          const viaPesquisa = await buscarProcessoPorNumero(session, numero, signal);
           if (viaPesquisa) {
             encontrado = {
               idProcesso: viaPesquisa.idProcesso,
@@ -111,17 +112,24 @@ export class ByNumberStrategy implements DownloadStrategy {
     return resultados;
   }
 
-  private async descobrirProcesso(session: PjeSession, numero: string): Promise<ProcessoInfo | null> {
+  private async descobrirProcesso(
+    session: PjeSession,
+    numero: string,
+    onCancelled: () => boolean,
+    signal?: AbortSignal,
+  ): Promise<ProcessoInfo | null> {
 
     try {
       const tarefas = await pjeApiPost<any[]>(
         session, 'painelUsuario/tarefas',
         { numeroProcesso: numero, competencia: '', etiquetas: [] },
+        signal,
       );
 
       const tarefasArr = Array.isArray(tarefas) ? tarefas : [];
       if (tarefasArr.length > 0) {
         for (const tarefa of tarefasArr) {
+          if (onCancelled()) return null;
           const nomeTarefa = tarefa?.nome;
           if (!nomeTarefa) continue;
 
@@ -129,7 +137,7 @@ export class ByNumberStrategy implements DownloadStrategy {
           const endpoint = `painelUsuario/recuperarProcessosTarefaPendenteComCriterios/${encoded}/false`;
 
           try {
-            const result = await pjeApiPost<any>(session, endpoint, buildBody(numero, 0));
+            const result = await pjeApiPost<any>(session, endpoint, buildBody(numero, 0), signal);
             const entities = result?.entities || (Array.isArray(result) ? result : []);
 
             for (const e of entities) {
@@ -160,10 +168,11 @@ export class ByNumberStrategy implements DownloadStrategy {
     ];
 
     for (const ep of apiEndpoints) {
+      if (onCancelled()) return null;
       try {
         const result = ep.method === 'GET'
-          ? await pjeApiGet<any>(session, ep.path)
-          : await pjeApiPost<any>(session, ep.path, ep.body);
+          ? await pjeApiGet<any>(session, ep.path, signal)
+          : await pjeApiPost<any>(session, ep.path, ep.body, signal);
 
         if (!result || typeof result === 'string') continue;
 

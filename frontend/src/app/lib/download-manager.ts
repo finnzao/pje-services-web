@@ -47,6 +47,7 @@ export interface DownloadManagerParams {
 }
 
 const MAX_CONCURRENT_FILE_DOWNLOADS = 3;
+const CANCEL_GRACE_MS = 20000;
 
 export function resolveBaseUrl(apiBase: string): string {
   if (apiBase) return apiBase;
@@ -147,6 +148,8 @@ export class DownloadManager {
   private apiBaseResolved = '';
   private onProgressRef: ProgressCallback | null = null;
   private cancelRequested = false;
+  private cancelPendingStreamId = false;
+  private cancelGraceTimer: ReturnType<typeof setTimeout> | null = null;
   private serverCancelled = false;
 
   constructor(fs?: FileSystemManager) {
@@ -175,6 +178,7 @@ export class DownloadManager {
     this.abortController = new AbortController();
     this.streamId = null;
     this.cancelRequested = false;
+    this.cancelPendingStreamId = false;
     this.serverCancelled = false;
     this.onProgressRef = onProgress;
     this.apiBaseResolved = resolveBaseUrl(params.apiBase);
@@ -234,8 +238,11 @@ export class DownloadManager {
         if (!this.abortController?.signal.aborted && !this.cancelRequested) {
           sseError = err instanceof Error ? err : new Error('Falha na conexão com o servidor.');
         }
+      } finally {
+        this.clearCancelGrace();
       }
     } catch (err) {
+      this.clearCancelGrace();
       this.abortController = null;
       this.streamId = null;
       if (this.cancelRequested || this.abortController === null) {
@@ -278,7 +285,7 @@ export class DownloadManager {
     this.abortController = null;
     this.streamId = null;
 
-    if (this.serverCancelled) {
+    if (this.serverCancelled || this.cancelRequested) {
       this.progress.phase = 'cancelled';
       this.progress.message = `Cancelado pelo usuário. ${this.progress.successCount} arquivo(s) salvo(s) antes da interrupção (${formatBytes(this.progress.bytesDownloaded)}).`;
       onProgress({ ...this.progress });
@@ -303,26 +310,58 @@ export class DownloadManager {
   }
 
   async cancel(): Promise<void> {
-    if (this.cancelRequested) return;
+    if (!this.isRunning) return;
+
+    if (this.cancelRequested) {
+      this.forceStop();
+      return;
+    }
+
     this.cancelRequested = true;
     this.progress.phase = 'cancelling';
-    this.progress.message = 'Cancelando — aguardando o servidor interromper o processamento...';
+    this.progress.message = 'Cancelando — aguardando o servidor interromper. Clique novamente para interromper agora.';
     this.onProgressRef?.({ ...this.progress });
 
+    this.cancelGraceTimer = setTimeout(() => this.forceStop(), CANCEL_GRACE_MS);
+
     if (this.streamId) {
-      try {
-        await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
-          method: 'POST',
-          keepalive: true,
-        });
-      } catch {  }
+      await this.notifyServerCancel();
+    } else {
+      this.cancelPendingStreamId = true;
     }
   }
 
   dispose(): void {
     this.cancelRequested = true;
+    this.clearCancelGrace();
     this.abortController?.abort();
     this.fs.dispose();
+  }
+
+  private async notifyServerCancel(): Promise<void> {
+    if (!this.streamId) return;
+    try {
+      await fetch(`${this.apiBaseResolved}/api/pje/downloads/stream-batch/${this.streamId}/cancel`, {
+        method: 'POST',
+        keepalive: true,
+      });
+    } catch {  }
+  }
+
+  private forceStop(): void {
+    this.clearCancelGrace();
+    if (!this.isRunning) return;
+    this.progress.phase = 'cancelling';
+    this.progress.message = 'Interrompendo agora...';
+    this.onProgressRef?.({ ...this.progress });
+    this.abortController?.abort();
+  }
+
+  private clearCancelGrace(): void {
+    if (this.cancelGraceTimer) {
+      clearTimeout(this.cancelGraceTimer);
+      this.cancelGraceTimer = null;
+    }
   }
 
   private processSSE(url: string, apiBase: string, onProgress: ProgressCallback): Promise<void> {
@@ -354,6 +393,10 @@ export class DownloadManager {
           const data = JSON.parse(e.data);
           if (data?.streamId) this.streamId = data.streamId;
         } catch {  }
+        if (this.cancelPendingStreamId && this.streamId) {
+          this.cancelPendingStreamId = false;
+          void this.notifyServerCancel();
+        }
       });
 
       es.addEventListener('precheck', (e: MessageEvent) => {
@@ -496,6 +539,7 @@ export class DownloadManager {
 
       es.addEventListener('cancelled', () => {
         this.serverCancelled = true;
+        this.clearCancelGrace();
         this.progress.phase = 'cancelling';
         this.progress.message = 'Cancelamento confirmado pelo servidor. Finalizando...';
         onProgress({ ...this.progress });
@@ -554,7 +598,7 @@ export class DownloadManager {
       }`,
     ];
 
-    if (this.serverCancelled) lines.push(`Status: CANCELADO PELO USUÁRIO`);
+    if (this.serverCancelled || this.cancelRequested) lines.push(`Status: CANCELADO PELO USUÁRIO`);
     if (params.taskName) lines.push(`Tarefa: ${params.taskName}`);
     if (params.tagName) lines.push(`Etiqueta: ${params.tagName}`);
     if (params.processNumbers?.length) {

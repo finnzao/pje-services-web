@@ -1,19 +1,17 @@
 import type { DownloadStrategy, ProcessoInfo } from './download-strategy';
 import type { PjeSession } from '../../../../../shared/pje-api-client';
 import { pjeApiPost } from '../../../../../shared/pje-api-client';
+import { sleep } from '../../../../../shared/abortable';
 
 const PAGE_SIZE = 500;
 const MAX_TOTAL = 10000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 export class ByTaskStrategy implements DownloadStrategy {
   async listProcesses(
     session: PjeSession,
     params: Record<string, unknown>,
     onCancelled: () => boolean,
+    signal?: AbortSignal,
   ): Promise<ProcessoInfo[]> {
     const taskName = (params.taskName as string) || '';
     const isFavorite = params.isFavorite === true;
@@ -41,7 +39,7 @@ export class ByTaskStrategy implements DownloadStrategy {
     const seenIds = new Set<number>();
     const processos: ProcessoInfo[] = [];
 
-    const result = await pjeApiPost<any>(session, endpoint, body);
+    const result = await pjeApiPost<any>(session, endpoint, body, signal);
     if (result === null || result === undefined) return [];
     if (typeof result === 'string') return [];
 
@@ -67,7 +65,7 @@ export class ByTaskStrategy implements DownloadStrategy {
         if (onCancelled()) break;
 
         const nextBody = { ...body, page: offset };
-        const nextResult = await pjeApiPost<any>(session, endpoint, nextBody);
+        const nextResult = await pjeApiPost<any>(session, endpoint, nextBody, signal);
         const nextEntities = nextResult?.entities || (Array.isArray(nextResult) ? nextResult : []);
 
         if (nextEntities.length === 0) break;
@@ -87,7 +85,7 @@ export class ByTaskStrategy implements DownloadStrategy {
 
         if (novos === 0 || nextEntities.length < PAGE_SIZE) break;
         offset += PAGE_SIZE;
-        await sleep(500);
+        await sleep(500, signal);
       }
     }
 

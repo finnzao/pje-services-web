@@ -6,25 +6,23 @@ import {
   buildSearchBody, buildPaginationBody, parseResultRows, parseResultCount,
   RESULTS_PER_PAGE, MAX_RESULTS,
 } from '../consulta-publica';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { sleep } from '../../../../../shared/abortable';
 
 export class BySearchStrategy implements DownloadStrategy {
   async listProcesses(
     session: PjeSession,
     params: Record<string, unknown>,
     onCancelled: () => boolean,
+    signal?: AbortSignal,
   ): Promise<ProcessoInfo[]> {
     const criteria = (params.searchCriteria as PesquisaProcessoCriteria) || {};
     const validacao = validateCriteria(criteria);
     if (!validacao.ok) throw new Error(validacao.error || 'Critérios inválidos.');
 
-    const formHtml = await consultaFetchForm(session);
+    const formHtml = await consultaFetchForm(session, signal);
     const viewState = extractViewState(formHtml) || 'j_id38';
 
-    const firstHtml = await consultaPost(session, buildSearchBody(criteria, viewState));
+    const firstHtml = await consultaPost(session, buildSearchBody(criteria, viewState), signal);
     const resultsViewState = extractViewState(firstHtml) || viewState;
     const total = Math.min(parseResultCount(firstHtml) || 0, MAX_RESULTS);
 
@@ -44,11 +42,11 @@ export class BySearchStrategy implements DownloadStrategy {
     const totalPages = total > 0 ? Math.ceil(total / RESULTS_PER_PAGE) : 1;
     for (let page = 2; page <= totalPages; page++) {
       if (onCancelled()) break;
-      const html = await consultaPost(session, buildPaginationBody(criteria, resultsViewState, page));
+      const html = await consultaPost(session, buildPaginationBody(criteria, resultsViewState, page), signal);
       const before = processos.length;
       pushRows(html);
       if (processos.length === before) break;
-      await sleep(300);
+      await sleep(300, signal);
     }
 
     return processos;

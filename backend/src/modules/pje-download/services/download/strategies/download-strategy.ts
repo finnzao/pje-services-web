@@ -11,5 +11,6 @@ export interface DownloadStrategy {
     session: PjeSession,
     params: Record<string, unknown>,
     onCancelled: () => boolean,
+    signal?: AbortSignal,
   ): Promise<ProcessoInfo[]>;
 }
