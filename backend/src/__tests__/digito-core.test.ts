@@ -3,7 +3,7 @@ import type { ProcessoDigito } from '../shared/types';
 import {
   CONFIG_PESO_PADRAO, FLAGS,
   avaliarProcesso, calcularBlocoB, calcularBlocoC, calcularBlocoE,
-  calcularDiasParados, classificarSituacao, distribuirPorServidor,
+  calcularDiasParados, classificarSituacao, distribuirPorServidor, flagsValidacaoBi,
   extrairDigito, metasDoProcesso, montarMapaAtribuicoes, normalizarMeta,
   ordenarPorDiasParados, parseDataPje, selecionarTarefas,
   type DadosAvaliacao,
@@ -220,14 +220,17 @@ describe('avaliarProcesso — exemplos calculados do DOC_Peso §7', () => {
     expect(r.flags).toContain(FLAGS.TEMPO_MORTO_INTERNO);
   });
 
-  it('processo comum sem etiqueta CCV → peso 7, NORMAL, P3', () => {
+  it('processo comum sem etiqueta CCV → peso 6, NORMAL, P3 (a flag não pontua nem gera providência)', () => {
     const r = avaliar({
       assuntoPrincipal: 'Indenização por Dano Moral',
       diasParados: 20, anoCnj: 2025, tarefas: ['Processo com prazo em curso'],
       flagsBase: [FLAGS.SEM_ETIQUETA_DIGITO],
     });
-    expect(r.blocos).toEqual({ A: 0, B: 6, C: 0, D: 1, E: 0, F: 1 });
-    expect(r.peso).toBe(7);
+    expect(r.blocos).toEqual({ A: 0, B: 6, C: 0, D: 0, E: 0, F: 1 });
+    expect(r.peso).toBe(6);
+    expect(r.flags).toContain(FLAGS.SEM_ETIQUETA_DIGITO);
+    expect(flagsValidacaoBi(r.flags)).not.toContain(FLAGS.SEM_ETIQUETA_DIGITO);
+    expect(r.providencias).toEqual([]);
     expect(r.faixa).toBe('NORMAL');
     expect(r.prioridade).toBe('P3');
   });
@@ -367,6 +370,13 @@ describe('configuração da automação por dígito', () => {
       { nome: 'Sem dígito', digitos: [] },
     ]);
     expect(config).toMatchObject({ modoDigito: 'verificador1', formato: 'zip', reduzida: true, tarefasIgnoradas: ['Análise'] });
+    expect(config?.padroesFilaEspera).toBeUndefined();
+  });
+
+  it('guarda os termos de fila de espera sem repetição e ignora lista inválida', () => {
+    const ok = validarConfigDigito({ servidores: [], padroesFilaEspera: [' (SUSP) ', '(susp)', 'Parcelamento', ''] });
+    expect(ok.config?.padroesFilaEspera).toEqual(['(SUSP)', 'Parcelamento']);
+    expect(validarConfigDigito({ servidores: [], padroesFilaEspera: 'x' }).erros[0]).toMatch(/padroesFilaEspera/);
   });
 
   it('rejeita corpo inválido, modo desconhecido e servidor repetido', () => {

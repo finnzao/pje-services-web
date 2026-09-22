@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { EtiquetarPorDigitoDTO, GerarPlanilhaDigitoDTO, SalvarConfigDigitoDTO } from '../../../shared/types';
 import type { EtiquetagemDigitoService, PlanilhaDigitoService } from '../services/planilha-digito';
-import { chaveConfigDigito, digitoConfigStore } from '../services/planilha-digito';
+import { CONFIG_PESO_PADRAO, chaveConfigDigito, digitoConfigStore, lerPadroesFilaEspera } from '../services/planilha-digito';
 import { sessionStore } from '../services/pje-auth';
 import { authMiddleware, getUser } from '../../../middleware/auth';
 import { handleServiceError, ok } from '../../../shared/response';
@@ -41,6 +41,18 @@ export function planilhaDigitoRoutes(service: PlanilhaDigitoService, etiquetagem
           success: false,
           error: { code: 'INVALID_FORMATO', message: 'Formato deve ser xlsx ou zip.', statusCode: 400 },
         });
+      }
+
+      if (dto.pesos?.padroesFilaEspera !== undefined) {
+        const erros: string[] = [];
+        const padroes = lerPadroesFilaEspera(dto.pesos.padroesFilaEspera, erros);
+        if (erros.length > 0 || !padroes) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'INVALID_PADROES', message: 'padroesFilaEspera deve ser uma lista de termos.', statusCode: 400 },
+          });
+        }
+        dto.pesos = { ...dto.pesos, padroesFilaEspera: padroes };
       }
 
       if (dto.etiquetasServidor !== undefined) {
@@ -117,6 +129,10 @@ function resolverChave(pjeSessionId: string | undefined, reply: FastifyReply): s
 
 function configDigitoRoutes() {
   return async function (fastify: FastifyInstance) {
+    fastify.get('/padroes-fila-espera', async (_request, reply) => {
+      ok(reply, { padrao: [...CONFIG_PESO_PADRAO.padroesFilaEspera] });
+    });
+
     fastify.get<{ Querystring: { pjeSessionId?: string } }>('/config', async (request, reply) => {
       const chave = resolverChave(request.query.pjeSessionId, reply);
       if (!chave) return;

@@ -19,6 +19,8 @@ export interface GerarPlanilhaDigitoParams {
   modoDigito?: ModoDigito;
   /** Etiqueta de cada servidor; habilita a etiquetagem ao final. */
   etiquetasServidor?: EtiquetaServidor[];
+  /** Ajustes pontuais do motor de peso; hoje só os termos de fila de espera. */
+  pesos?: { padroesFilaEspera?: string[] };
 }
 
 export interface ServidorConfigDigito { nome: string; digitos: number[]; etiqueta?: { id: number; nome: string }; }
@@ -31,6 +33,7 @@ export interface ConfigAutomacaoDigito {
   tarefasIgnoradas: string[];
   formato: 'xlsx' | 'zip';
   reduzida: boolean;
+  padroesFilaEspera?: string[];
   atualizadoEm: string;
   atualizadoPor?: string;
 }
@@ -169,4 +172,8 @@ export async function salvarConfigDigito(pjeSessionId: string, config: ConfigAut
 
 export async function limparConfigDigito(pjeSessionId: string) {
   return request<{ removida: boolean }>(`/api/pje/planilha-digito/config?pjeSessionId=${encodeURIComponent(pjeSessionId)}`, { method: 'DELETE' });
+}
+
+export async function obterPadroesFilaEspera() {
+  return request<{ padrao: string[] }>('/api/pje/planilha-digito/padroes-fila-espera');
 }

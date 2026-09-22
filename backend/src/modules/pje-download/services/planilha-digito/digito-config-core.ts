@@ -5,6 +5,8 @@ export const CONFIG_DIGITO_VERSAO = 1;
 const MAX_SERVIDORES = 50;
 const MAX_NOME = 120;
 const MAX_TAREFAS = 500;
+const MAX_PADROES_FILA = 100;
+const MAX_PADRAO = 80;
 const MODOS: ModoDigito[] = ['sequencial', 'verificador1', 'verificador2'];
 
 export interface ResultadoValidacaoDigito {
@@ -72,6 +74,23 @@ function lerTarefas(raw: unknown, erros: string[]): string[] {
   return out;
 }
 
+export function lerPadroesFilaEspera(raw: unknown, erros: string[]): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) { erros.push('padroesFilaEspera deve ser uma lista de termos.'); return undefined; }
+  const vistos = new Set<string>();
+  const out: string[] = [];
+  for (const p of raw) {
+    if (typeof p !== 'string') continue;
+    const termo = p.trim().slice(0, MAX_PADRAO);
+    const norm = normalizarTexto(termo);
+    if (!norm || vistos.has(norm)) continue;
+    vistos.add(norm);
+    out.push(termo);
+    if (out.length >= MAX_PADROES_FILA) break;
+  }
+  return out;
+}
+
 /** Normaliza e valida o corpo enviado pela tela (ou lido do disco). Nunca lança. */
 export function validarConfigDigito(raw: unknown): ResultadoValidacaoDigito {
   const erros: string[] = [];
@@ -87,6 +106,7 @@ export function validarConfigDigito(raw: unknown): ResultadoValidacaoDigito {
   if (r.formato !== undefined && r.formato !== 'xlsx' && r.formato !== 'zip') erros.push('formato deve ser xlsx ou zip.');
   const reduzida = r.reduzida === true;
   const tarefasIgnoradas = lerTarefas(r.tarefasIgnoradas, erros);
+  const padroesFilaEspera = lerPadroesFilaEspera(r.padroesFilaEspera, erros);
 
   if (erros.length > 0) return { erros };
   return {
@@ -94,6 +114,7 @@ export function validarConfigDigito(raw: unknown): ResultadoValidacaoDigito {
     config: {
       versao: CONFIG_DIGITO_VERSAO,
       servidores, modoDigito, tarefasIgnoradas, formato, reduzida,
+      ...(padroesFilaEspera ? { padroesFilaEspera } : {}),
       atualizadoEm: typeof r.atualizadoEm === 'string' ? r.atualizadoEm : new Date(0).toISOString(),
       atualizadoPor: typeof r.atualizadoPor === 'string' ? r.atualizadoPor : undefined,
     },

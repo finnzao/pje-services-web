@@ -178,6 +178,8 @@ export interface ConfigAutomacaoDigito {
   tarefasIgnoradas: string[];
   formato: 'xlsx' | 'zip';
   reduzida: boolean;
+  /** Termos que marcam uma tarefa como fila de espera; ausente = padrão do motor. */
+  padroesFilaEspera?: string[];
   atualizadoEm: string;
   atualizadoPor?: string;
 }

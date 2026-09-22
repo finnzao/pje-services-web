@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import type { ConfigPeso, FaixaPeso, ModoDigito, ProcessoDigito } from '../../../../shared/types';
 import { XLSX_THIN_BORDER } from '../xlsx-common';
 import type { ResultadoDistribuicao } from './digito-core';
-import { FLAGS } from './digito-core';
+import { FLAGS, flagsValidacaoBi } from './digito-core';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'downloads', 'planilhas');
 const MAX_SHEET_NAME_LEN = 31;
@@ -110,7 +110,7 @@ function colunasBase(reduzida: boolean): ColunaDef[] {
     { titulo: 'Meta afetada', largura: 18, valor: (p) => p.metas.map(rotuloMeta).join(', ') },
     { titulo: 'Peso', largura: 7, valor: (p) => p.pontuacao },
     { titulo: 'Faixa', largura: 10, valor: (p) => ESTILO_FAIXA[p.faixa].rotulo },
-    { titulo: 'Validação BI', largura: 30, valor: (p) => p.flags.join(', ') },
+    { titulo: 'Validação BI', largura: 30, valor: (p) => flagsValidacaoBi(p.flags).join(', ') },
     { titulo: 'Providência', largura: 50, valor: (p) => p.providencias.join(' | ') },
     { titulo: 'Assunto', largura: 32, valor: (p) => p.assuntoPrincipal || '' },
   ];

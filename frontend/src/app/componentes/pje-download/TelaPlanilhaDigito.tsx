@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileSpreadsheet, FileArchive, Hash, Info, Loader2, Tags, Tag, AlertTriangle, RotateCcw, SlidersHorizontal,
-  Plus, Trash2, User, ShieldAlert, ChevronDown, X, Save, BookmarkCheck,
+  Plus, Trash2, User, ShieldAlert, ChevronDown, ChevronUp, X, Save, BookmarkCheck, Hourglass,
 } from 'lucide-react';
 import { BarraStatusFixa } from './BarraStatusFixa';
 import { CampoBusca } from './CampoBusca';
@@ -18,7 +18,7 @@ import { safeStr } from './types';
 import {
   gerarPlanilhaDigito, obterProgressoDigito, cancelarPlanilhaDigito, downloadPlanilhaDigito,
   etiquetarPorDigito, obterProgressoEtiquetagem, cancelarEtiquetagemDigito,
-  obterConfigDigito, salvarConfigDigito, limparConfigDigito,
+  obterConfigDigito, salvarConfigDigito, limparConfigDigito, obterPadroesFilaEspera,
   type ConfigAutomacaoDigito, type ConfigAutomacaoDigitoInput,
   type EtiquetagemDigitoProgress, type ModoDigito, type PlanilhaDigitoProgress, type PlanilhaDigitoResumo,
 } from './api-planilha-digito';
@@ -66,6 +66,10 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressoRef = useRef<HTMLDivElement | null>(null);
   const statusAnterior = useRef<string | null>(null);
+
+  // null = usa os termos padrão do motor.
+  const [padroesFila, setPadroesFila] = useState<string[] | null>(null);
+  const [padroesFilaPadrao, setPadroesFilaPadrao] = useState<string[]>([]);
 
   const [configSalva, setConfigSalva] = useState<ConfigAutomacaoDigito | null>(null);
   const [salvandoConfig, setSalvandoConfig] = useState(false);
@@ -163,11 +167,13 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     tarefasIgnoradas: ignoradas.map((t) => t.nome),
     formato,
     reduzida,
-  }), [servidores, modoDigito, ignoradas, formato, reduzida]);
+    ...(padroesFila ? { padroesFilaEspera: padroesFila } : {}),
+  }), [servidores, modoDigito, ignoradas, formato, reduzida, padroesFila]);
 
   const assinaturaSalva = useMemo(() => configSalva ? JSON.stringify({
     servidores: configSalva.servidores, modoDigito: configSalva.modoDigito,
     tarefasIgnoradas: configSalva.tarefasIgnoradas, formato: configSalva.formato, reduzida: configSalva.reduzida,
+    ...(configSalva.padroesFilaEspera ? { padroesFilaEspera: configSalva.padroesFilaEspera } : {}),
   }) : null, [configSalva]);
   const alteracoesNaoSalvas = assinaturaSalva !== null && assinaturaSalva !== JSON.stringify(configAtual);
 
@@ -188,8 +194,13 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     setIgnoradas(cfg.tarefasIgnoradas.map((nome) => ({ nome, favorita: false })));
     setFormato(cfg.formato);
     setReduzida(cfg.reduzida);
+    setPadroesFila(cfg.padroesFilaEspera ?? null);
     setAvisoConfig(perdidas.length > 0 ? `Etiqueta(s) não encontrada(s) neste perfil e desvinculada(s): ${perdidas.join(', ')}.` : null);
   }, [etiquetas]);
+
+  useEffect(() => {
+    obterPadroesFilaEspera().then((r) => setPadroesFilaPadrao(r.padrao)).catch(() => { /* fica sem os termos padrão à mostra */ });
+  }, []);
 
   useEffect(() => {
     let ativo = true;
@@ -326,6 +337,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
         reduzida,
         modoDigito,
         etiquetasServidor: etiquetasServidor.length > 0 ? etiquetasServidor : undefined,
+        pesos: padroesFila ? { padroesFilaEspera: padroesFila } : undefined,
       });
       setJob({
         jobId: result.jobId, status: 'listing', progress: 0,
@@ -338,7 +350,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     } finally {
       setIniciando(false);
     }
-  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, reduzida, modoDigito, etiquetasServidor, startPolling, salvarConfig]);
+  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, reduzida, modoDigito, etiquetasServidor, padroesFila, startPolling, salvarConfig]);
 
   const handleCancelar = useCallback(async () => {
     if (!job) return;
@@ -694,6 +706,14 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
             )}
           </div>
 
+          <FilasDeEspera
+            termos={padroesFila ?? padroesFilaPadrao}
+            personalizado={padroesFila !== null}
+            tarefas={tarefas}
+            onChange={(termos) => { formularioTocado.current = true; setPadroesFila(termos); }}
+            onRestaurar={() => { formularioTocado.current = true; setPadroesFila(null); }}
+          />
+
           <div>
             <div className="mb-3 flex items-center gap-2">
               <span className="num-badge">4</span>
@@ -848,6 +868,101 @@ function SeletorEtiqueta({ etiquetas, selecionada, onSelecionar, donoDe, rotulo 
   );
 }
 
+// Fica recolhido de propósito: quase ninguém precisa mexer nisso.
+function FilasDeEspera({ termos, personalizado, tarefas, onChange, onRestaurar }: {
+  termos: string[];
+  personalizado: boolean;
+  tarefas: TarefaPJE[];
+  onChange: (termos: string[]) => void;
+  onRestaurar: () => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [novo, setNovo] = useState('');
+
+  const termosNorm = useMemo(() => termos.map(normalizar).filter(Boolean), [termos]);
+  const tarefasEmFila = useMemo(
+    () => tarefas.filter((t) => { const n = normalizar(t.nome); return termosNorm.some((p) => n.includes(p)); }),
+    [tarefas, termosNorm],
+  );
+
+  const adicionar = () => {
+    const termo = novo.trim();
+    if (!termo) return;
+    if (!termosNorm.includes(normalizar(termo))) onChange([...termos, termo]);
+    setNovo('');
+  };
+  const remover = (termo: string) => onChange(termos.filter((t) => t !== termo));
+
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-200">
+      <button
+        type="button"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs text-slate-600 hover:text-ink"
+      >
+        <Hourglass size={14} className="shrink-0 text-slate-500" aria-hidden />
+        <span>
+          Filas de espera · {termos.length} termo(s) · {tarefasEmFila.length} tarefa(s) do painel
+          {personalizado && <span className="ml-1.5 chip bg-brass-50 text-brass-600">personalizado</span>}
+        </span>
+        {aberto ? <ChevronUp size={14} className="ml-auto shrink-0" aria-hidden /> : <ChevronDown size={14} className="ml-auto shrink-0" aria-hidden />}
+      </button>
+
+      {aberto && (
+        <div className="space-y-3 border-t border-dashed border-slate-200 px-4 py-3 text-xs">
+          <p className="text-slate-600">
+            Tarefa cujo nome contém um destes termos vira <strong>fila de espera</strong>: o processo
+            perde peso e não conta como trabalhável. Termos comparados sem acento nem maiúsculas.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {termos.map((t) => (
+              <span key={t} className="chip bg-slate-100 text-slate-700">
+                {t}
+                <button type="button" onClick={() => remover(t)} className="ml-0.5 text-slate-400 hover:text-red-600" aria-label={`Remover termo ${t}`}>
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            {termos.length === 0 && <span className="text-slate-500">Nenhum termo: nenhuma tarefa será fila de espera.</span>}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={novo}
+              onChange={(e) => setNovo(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } }}
+              list="tarefas-painel-fila"
+              placeholder="Novo termo ou nome de tarefa do painel"
+              aria-label="Novo termo de fila de espera"
+              className="field flex-1"
+            />
+            <datalist id="tarefas-painel-fila">
+              {tarefas.filter((t) => !tarefasEmFila.includes(t)).map((t) => <option key={t.id} value={t.nome} />)}
+            </datalist>
+            <button type="button" onClick={adicionar} disabled={!novo.trim()} className="btn btn-ghost shrink-0 px-3 py-2 text-xs">
+              <Plus size={13} /> Adicionar
+            </button>
+            {personalizado && (
+              <button type="button" onClick={onRestaurar} className="btn btn-ghost shrink-0 px-3 py-2 text-xs">
+                <RotateCcw size={13} /> Padrão
+              </button>
+            )}
+          </div>
+          {tarefasEmFila.length > 0 && (
+            <details className="text-slate-600">
+              <summary className="cursor-pointer select-none">Tarefas do painel classificadas hoje ({tarefasEmFila.length})</summary>
+              <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto pl-4 scroll-area">
+                {tarefasEmFila.map((t) => <li key={t.id} className="list-disc">{t.nome}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResumoEtiquetagem({ etiquetagem }: { etiquetagem: EtiquetagemDigitoProgress }) {
   const erros = etiquetagem.processos.filter((p) => p.acao === 'erro');
   return (
@@ -939,7 +1054,7 @@ function ResumoDistribuicao({ resumo, comEtiquetagem }: { resumo: PlanilhaDigito
               <p>• Dígito(s) <strong>{resumo.naoAtribuidos.digitosSemServidor.join(', ')}</strong> sem servidor atribuído — os processos estão na aba/arquivo &quot;Não atribuídos&quot;.</p>
             )}
             {resumo.semEtiquetaServidor > 0 && (
-              <p>• <strong>{resumo.semEtiquetaServidor}</strong> processo(s) sem a etiqueta do servidor responsável no PJE (flag SEM_ETIQUETA_DIGITO na planilha).</p>
+              <p>• <strong>{resumo.semEtiquetaServidor}</strong> processo(s) sem a etiqueta do servidor responsável no PJE.</p>
             )}
             {resumo.etiquetaDivergente > 0 && (
               <p>• <strong>{resumo.etiquetaDivergente}</strong> processo(s) com etiqueta apontando para outro servidor (flag DIGITO_DIVERGENTE) — o cálculo pelo dígito prevalece.</p>

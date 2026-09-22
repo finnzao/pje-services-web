@@ -22,9 +22,15 @@ export const PROVIDENCIAS: Record<string, string> = {
   [FLAGS.ASSUNTO_REVISAR]: 'Retificar o assunto para o ramo correto da TPU antes de qualquer outro ato',
   [FLAGS.ASSUNTO_AUSENTE]: 'Cadastrar o assunto principal (TPU)',
   [FLAGS.DIGITO_DIVERGENTE]: 'Reetiquetar — a etiqueta aponta para outro servidor/dígito (o cálculo prevalece)',
-  [FLAGS.SEM_ETIQUETA_DIGITO]: 'Etiquetar com o servidor do dígito',
   [FLAGS.BLOQUEADO]: 'GAB_nao trabalhar: exige confirmação do gabinete para liberar',
 };
+
+// Falta de etiqueta é resolvida pela etiquetagem automática, não é problema de BI.
+const FLAGS_FORA_DA_VALIDACAO_BI: ReadonlySet<string> = new Set([FLAGS.SEM_ETIQUETA_DIGITO]);
+
+export function flagsValidacaoBi(flags: string[]): string[] {
+  return flags.filter((f) => !FLAGS_FORA_DA_VALIDACAO_BI.has(f));
+}
 
 /**
  * Parâmetros default do motor de peso, transcritos do
@@ -85,7 +91,6 @@ export const CONFIG_PESO_PADRAO: ConfigPeso = {
     [FLAGS.ASSUNTO_REVISAR]: 8,
     [FLAGS.ASSUNTO_AUSENTE]: 8,
     [FLAGS.DIGITO_DIVERGENTE]: 2,
-    [FLAGS.SEM_ETIQUETA_DIGITO]: 1,
   },
   tetoRastro: 15,
   // E — Proximidade da baixa
