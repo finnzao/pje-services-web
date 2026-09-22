@@ -57,8 +57,8 @@ const GRUPOS: Grupo[] = [
       {
         id: 'digito',
         icone: <Hash size={22} />,
-        titulo: 'Planilha por Dígito',
-        descricao: 'Distribua o acervo entre servidores pelo dígito do processo, com prioridades.',
+        titulo: 'Automações por Dígito',
+        descricao: 'Distribua o acervo entre servidores pelo dígito do processo, com prioridades e etiquetagem.',
         accent: 'emerald',
       },
     ],

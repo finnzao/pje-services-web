@@ -7,8 +7,10 @@ import {
   extrairDigito, metasDoProcesso, montarMapaAtribuicoes, normalizarMeta,
   ordenarPorDiasParados, parseDataPje, selecionarTarefas,
   type DadosAvaliacao,
+  montarMapaEtiquetas, planejarEtiquetagem,
 } from '../modules/pje-download/services/planilha-digito/digito-core';
 import { extrairDataMovimento } from '../modules/pje-download/services/planilha-digito/planilha-digito.service';
+import { chaveConfigDigito, validarConfigDigito } from '../modules/pje-download/services/planilha-digito/digito-config-core';
 
 const CONFIG = CONFIG_PESO_PADRAO;
 const SEM_METAS = new Map<string, number>();
@@ -305,5 +307,77 @@ describe('distribuirPorServidor', () => {
     expect(divergente.servidor).toBe('Terezinha');
     expect(naoAtribuidos.map((p) => p.numeroProcesso)).toEqual(['Z', 'inválido']);
     expect(malformado.flags).toContain(FLAGS.NUMERO_MALFORMADO);
+  });
+});
+
+describe('etiquetagem por dígito', () => {
+  const mapa = montarMapaAtribuicoes([
+    { digito: 2, servidor: 'Abel' },
+    { digito: 9, servidor: 'Terezinha' },
+    { digito: 4, servidor: 'Carol' },
+  ]);
+  const etiquetas = montarMapaEtiquetas([
+    { servidor: 'Abel', etiqueta: { id: 10, nome: 'CCV_Abel' } },
+    { servidor: 'Terezinha', etiqueta: { id: 20, nome: 'CCV_Terezinha' } },
+    { servidor: 'Fulano', etiqueta: { id: 30, nome: 'CCV_Fulano' } },
+    { servidor: 'Carol', etiqueta: { id: 0, nome: '' } },
+  ], mapa);
+
+  it('só guarda etiquetas válidas de servidores presentes na atribuição', () => {
+    expect([...etiquetas.keys()]).toEqual(['Abel', 'Terezinha']);
+  });
+
+  it('com etiqueta vinculada a auditoria compara o nome exato', () => {
+    const exato = procBase({ digito: 2, etiquetas: ['ccv_abel'] });
+    const parecido = procBase({ digito: 2, numeroProcesso: 'X', etiquetas: ['CCV_Abel_2'] });
+    distribuirPorServidor([exato, parecido], mapa, etiquetas);
+    expect(exato.flags).toEqual([]);
+    expect(parecido.flags).toContain(FLAGS.SEM_ETIQUETA_DIGITO);
+  });
+
+  it('planeja inserir a etiqueta do servidor e remover a dos demais, ignorando servidor sem etiqueta', () => {
+    const semNada = procBase({ idProcesso: 1, numeroProcesso: 'A', digito: 2, etiquetas: ['GAB_Meta_2'] });
+    const jaCerto = procBase({ idProcesso: 2, numeroProcesso: 'B', digito: 2, etiquetas: ['CCV_Abel'] });
+    const trocado = procBase({ idProcesso: 3, numeroProcesso: 'C', digito: 9, etiquetas: ['CCV_Abel'] });
+    const deCarol = procBase({ idProcesso: 4, numeroProcesso: 'D', digito: 4, etiquetas: ['CCV_Abel'] });
+    const { porServidor } = distribuirPorServidor([semNada, jaCerto, trocado, deCarol], mapa, etiquetas);
+
+    const plano = planejarEtiquetagem(porServidor, etiquetas);
+    expect(plano.map((i) => i.numeroProcesso)).toEqual(['A', 'C']);
+    expect(plano[0]).toMatchObject({ servidor: 'Abel', inserir: { id: 10 }, remover: [] });
+    expect(plano[1]).toMatchObject({ servidor: 'Terezinha', inserir: { id: 20 }, remover: [{ id: 10 }] });
+  });
+});
+
+describe('configuração da automação por dígito', () => {
+  it('normaliza servidores: dígito e etiqueta ficam com o primeiro dono, linhas vazias somem', () => {
+    const { config, erros } = validarConfigDigito({
+      servidores: [
+        { nome: ' Abel ', digitos: [3, 1, 1, '7', 12], etiqueta: { id: 10, nome: 'CCV_Abel' } },
+        { nome: 'Carol', digitos: [1, 4], etiqueta: { id: 10, nome: 'CCV_Abel' } },
+        { nome: '', digitos: [] },
+        { nome: 'Sem dígito', digitos: [] },
+      ],
+      modoDigito: 'verificador1', formato: 'zip', reduzida: true, tarefasIgnoradas: ['Análise', 'analise', ''],
+    });
+    expect(erros).toEqual([]);
+    expect(config?.servidores).toEqual([
+      { nome: 'Abel', digitos: [1, 3, 7], etiqueta: { id: 10, nome: 'CCV_Abel' } },
+      { nome: 'Carol', digitos: [4] },
+      { nome: 'Sem dígito', digitos: [] },
+    ]);
+    expect(config).toMatchObject({ modoDigito: 'verificador1', formato: 'zip', reduzida: true, tarefasIgnoradas: ['Análise'] });
+  });
+
+  it('rejeita corpo inválido, modo desconhecido e servidor repetido', () => {
+    expect(validarConfigDigito(null).erros).toHaveLength(1);
+    expect(validarConfigDigito({ servidores: [], modoDigito: 'x' }).erros).toContain('modoDigito inválido.');
+    const rep = validarConfigDigito({ servidores: [{ nome: 'Ana', digitos: [1] }, { nome: 'ana', digitos: [2] }] });
+    expect(rep.erros[0]).toMatch(/repetido/);
+  });
+
+  it('chave é por CPF e perfil, com fallback no idUsuario', () => {
+    expect(chaveConfigDigito({ cpf: '123.456.789-00', idUsuarioLocalizacao: '55' })).toBe('12345678900::55');
+    expect(chaveConfigDigito({ idUsuario: 9, idUsuarioLocalizacao: '55' })).toBe('u9::55');
   });
 });

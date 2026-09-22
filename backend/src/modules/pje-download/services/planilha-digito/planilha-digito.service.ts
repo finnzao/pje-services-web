@@ -1,5 +1,5 @@
 import type {
-  ConfigPeso, GerarPlanilhaDigitoDTO, ModoDigito,
+  ConfigPeso, EtiquetaServidorRef, GerarPlanilhaDigitoDTO, ModoDigito,
   PlanilhaDigitoProgress, PlanilhaDigitoResumo, ProcessoDigito,
 } from '../../../../shared/types';
 import { pjeApiGet, pjeApiPost, type PjeSession } from '../../../../shared/pje-api-client';
@@ -10,8 +10,8 @@ import {
 import {
   CONFIG_PESO_PADRAO, FLAGS,
   avaliarProcesso, calcularDiasParados, distribuirPorServidor, extrairDigito,
-  metasDoProcesso, montarMapaAtribuicoes, ordenarPorDiasParados,
-  selecionarTarefas,
+  metasDoProcesso, montarMapaAtribuicoes, montarMapaEtiquetas, ordenarPorDiasParados,
+  planejarEtiquetagem, selecionarTarefas, type ItemEtiquetagem,
 } from './digito-core';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
 
@@ -42,9 +42,15 @@ interface RegistroBruto {
   ultimoMovimento?: string;
 }
 
+export interface PlanoEtiquetagemJob {
+  itens: ItemEtiquetagem[];
+  etiquetas: Map<string, EtiquetaServidorRef>;
+}
+
 export class PlanilhaDigitoService {
   private cancelledJobs = new Set<string>();
   private progressMap = new Map<string, PlanilhaDigitoProgress>();
+  private planosEtiquetagem = new Map<string, PlanoEtiquetagemJob>();
 
   constructor() {
     // progressMap sem TTL foi apontado como dívida na planilha de advogados — aqui os
@@ -57,9 +63,14 @@ export class PlanilhaDigitoService {
     const limite = Date.now() - JOB_TTL_MS;
     for (const [jobId, progress] of this.progressMap) {
       const terminal = ['completed', 'failed', 'cancelled'].includes(progress.status);
-      if (terminal && progress.timestamp < limite) this.progressMap.delete(jobId);
+      if (terminal && progress.timestamp < limite) {
+        this.progressMap.delete(jobId);
+        this.planosEtiquetagem.delete(jobId);
+      }
     }
   }
+
+  getPlanoEtiquetagem(jobId: string): PlanoEtiquetagemJob | null { return this.planosEtiquetagem.get(jobId) ?? null; }
 
   cancel(jobId: string): void {
     this.cancelledJobs.add(jobId);
@@ -90,6 +101,7 @@ export class PlanilhaDigitoService {
       const pesos: ConfigPeso = { ...CONFIG_PESO_PADRAO, ...(dto.pesos ?? {}) };
       const modoDigito: ModoDigito = dto.modoDigito ?? 'sequencial';
       const mapa = montarMapaAtribuicoes(dto.atribuicoes);
+      const etiquetasServidor = montarMapaEtiquetas(dto.etiquetasServidor, mapa);
 
       const session = await resolveSessionFromDto(dto);
 
@@ -148,7 +160,7 @@ export class PlanilhaDigitoService {
       });
 
       // A distribuição vem antes do peso: as flags de etiqueta (dígito) entram no bloco D.
-      const distribuicao = distribuirPorServidor(processos, mapa);
+      const distribuicao = distribuirPorServidor(processos, mapa, etiquetasServidor);
 
       // "Meta a um passo" = restantes por meta no acervo analisado (a base de
       // conclusos do gabinete ainda não entra nesta contagem).
@@ -173,6 +185,18 @@ export class PlanilhaDigitoService {
       );
 
       const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa, metasRestantes, pesos, processos);
+
+      if (etiquetasServidor.size > 0) {
+        const itens = planejarEtiquetagem(distribuicao.porServidor, etiquetasServidor);
+        this.planosEtiquetagem.set(jobId, { itens, etiquetas: etiquetasServidor });
+        resumo.etiquetagem = {
+          inserir: itens.filter((i) => i.inserir).length,
+          remover: itens.reduce((n, i) => n + i.remover.length, 0),
+          processosAfetados: itens.length,
+          servidoresSemEtiqueta: [...distribuicao.porServidor.keys()].filter((s) => !etiquetasServidor.has(s)),
+        };
+      }
+
       emit({
         status: 'completed', progress: 100, totalProcesses: registros.length,
         processedCount: registros.length, fileName, resumo,

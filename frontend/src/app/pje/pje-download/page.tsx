@@ -716,6 +716,7 @@ export default function PaginaDownloadPJE() {
                       <TelaPlanilhaDigito
                         sessionId={sessao.sessionId}
                         tarefas={sessao.tarefas || []}
+                        etiquetas={sessao.etiquetas || []}
                         credenciais={credenciais}
                         perfilIndice={sessao.perfilSelecionado?.indice}
                       />

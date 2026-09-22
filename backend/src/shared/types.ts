@@ -51,6 +51,10 @@ export interface PlanilhaAdvogadosResult {
 
 export interface AtribuicaoDigito { digito: number; servidor: string; }
 
+export interface EtiquetaServidorRef { id: number; nome: string; }
+/** Etiqueta do PJE que identifica o servidor na automação por dígito. */
+export interface EtiquetaServidor { servidor: string; etiqueta: EtiquetaServidorRef; }
+
 export interface FaixaPontos { ate: number; pontos: number; }
 export interface GrupoTermos { nome: string; pontos: number; termos: string[]; }
 
@@ -116,6 +120,8 @@ export interface GerarPlanilhaDigitoDTO {
   modoDigito?: ModoDigito;
   /** Sobrescreve pontualmente os parâmetros do motor de peso. */
   pesos?: Partial<ConfigPeso>;
+  /** Etiqueta de cada servidor; habilita a etiquetagem ao final da planilha. */
+  etiquetasServidor?: EtiquetaServidor[];
 }
 
 export type SituacaoProcesso = 'TRABALHAVEL' | 'FILA_ESPERA';
@@ -158,6 +164,65 @@ export interface PlanilhaDigitoResumo {
   semEtiquetaServidor: number;
   etiquetaDivergente: number;
   malformados: number;
+  /** Presente quando ao menos um servidor tem etiqueta vinculada. */
+  etiquetagem?: PlanoEtiquetagemResumo;
+}
+
+/** Configuração da tela salva por perfil do PJE, para ser restaurada na próxima visita. */
+export interface ServidorConfigDigito { nome: string; digitos: number[]; etiqueta?: EtiquetaServidorRef; }
+
+export interface ConfigAutomacaoDigito {
+  versao: number;
+  servidores: ServidorConfigDigito[];
+  modoDigito: ModoDigito;
+  tarefasIgnoradas: string[];
+  formato: 'xlsx' | 'zip';
+  reduzida: boolean;
+  atualizadoEm: string;
+  atualizadoPor?: string;
+}
+
+export interface SalvarConfigDigitoDTO {
+  pjeSessionId: string;
+  config: Omit<ConfigAutomacaoDigito, 'versao' | 'atualizadoEm' | 'atualizadoPor'>;
+}
+
+export interface PlanoEtiquetagemResumo {
+  inserir: number;
+  remover: number;
+  processosAfetados: number;
+  servidoresSemEtiqueta: string[];
+}
+
+export interface EtiquetarPorDigitoDTO {
+  credentials?: { cpf: string; password: string };
+  pjeSessionId?: string;
+  pjeProfileIndex?: number;
+}
+
+export type AcaoEtiquetagemDigito = 'inserida' | 'removida' | 'erro';
+
+export interface ProcessoEtiquetadoDigito {
+  idProcesso: number;
+  numeroProcesso: string;
+  servidor: string;
+  etiqueta: string;
+  acao: AcaoEtiquetagemDigito;
+  erro?: string;
+}
+
+export interface EtiquetagemDigitoProgress {
+  jobId: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelling' | 'cancelled';
+  progress: number;
+  total: number;
+  feitos: number;
+  inseridas: number;
+  removidas: number;
+  erros: number;
+  message: string;
+  timestamp: number;
+  processos: ProcessoEtiquetadoDigito[];
 }
 
 export interface PlanilhaDigitoProgress {

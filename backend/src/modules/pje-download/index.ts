@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { PjeAdvogadosService } from './services/pje-advogados/index';
-import { PlanilhaDigitoService } from './services/planilha-digito/index';
+import { EtiquetagemDigitoService, PlanilhaDigitoService } from './services/planilha-digito/index';
 import { authRoutes } from './controllers/auth.controller';
 import { advogadosRoutes } from './controllers/advogados.controller';
 import { planilhaDigitoRoutes } from './controllers/planilha-digito.controller';
@@ -16,5 +16,6 @@ export async function registerPJEDownloadModule(fastify: FastifyInstance) {
   await fastify.register(advogadosRoutes(advogadosService), { prefix: '/api/pje/advogados' });
 
   const planilhaDigitoService = new PlanilhaDigitoService();
-  await fastify.register(planilhaDigitoRoutes(planilhaDigitoService), { prefix: '/api/pje/planilha-digito' });
+  const etiquetagemDigitoService = new EtiquetagemDigitoService(planilhaDigitoService);
+  await fastify.register(planilhaDigitoRoutes(planilhaDigitoService, etiquetagemDigitoService), { prefix: '/api/pje/planilha-digito' });
 }

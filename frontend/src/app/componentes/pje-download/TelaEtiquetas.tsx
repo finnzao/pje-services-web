@@ -334,7 +334,7 @@ export function TelaEtiquetas({ sessionId, tarefas, etiquetas, credenciais, perf
               <Info size={14} className="mt-0.5 flex-shrink-0" aria-hidden />
               <span>
                 Conta-se a partir da <strong>data da última movimentação</strong> do processo — o
-                mesmo critério de &quot;dias parados&quot; da planilha por dígito. Serão etiquetados
+                mesmo critério de &quot;dias parados&quot; da automação por dígito. Serão etiquetados
                 os processos parados há <strong>mais de</strong> {diasValido ? diasParado : '…'} dias.
               </span>
             </div>
