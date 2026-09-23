@@ -13,6 +13,8 @@ import {
   metasDoProcesso, montarMapaAtribuicoes, montarMapaEtiquetas, ordenarPorDiasParados,
   planejarEtiquetagem, selecionarTarefas, type ItemEtiquetagem,
 } from './digito-core';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { gerarSaidaDigito } from './xlsx-digito-generator';
 
 // Parsers de linha do painel e extrairDataMovimento vivem em download/painel-listing
@@ -24,6 +26,7 @@ const STAGGER_MS = 250;
 // Jobs terminais são varridos junto com o ciclo do GC de arquivos (30 min / 1 h).
 const JOB_TTL_MS = 60 * 60 * 1000;
 const JOB_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+const SAIDA_TTL_MS = 15 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -42,15 +45,23 @@ interface RegistroBruto {
   ultimoMovimento?: string;
 }
 
+export type FormatoSaidaDigito = 'xlsx' | 'zip';
+
+interface SaidaJob {
+  parametros: Parameters<typeof gerarSaidaDigito>;
+  arquivos: Partial<Record<FormatoSaidaDigito, Promise<{ fileName: string; filePath: string }>>>;
+}
+
 export interface PlanoEtiquetagemJob {
   itens: ItemEtiquetagem[];
-  etiquetas: Map<string, EtiquetaServidorRef>;
+  etiquetas: Map<number, EtiquetaServidorRef>;
 }
 
 export class PlanilhaDigitoService {
   private cancelledJobs = new Set<string>();
   private progressMap = new Map<string, PlanilhaDigitoProgress>();
   private planosEtiquetagem = new Map<string, PlanoEtiquetagemJob>();
+  private saidas = new Map<string, SaidaJob>();
 
   constructor() {
     // progressMap sem TTL foi apontado como dívida na planilha de advogados — aqui os
@@ -66,11 +77,35 @@ export class PlanilhaDigitoService {
       if (terminal && progress.timestamp < limite) {
         this.progressMap.delete(jobId);
         this.planosEtiquetagem.delete(jobId);
+        this.saidas.delete(jobId);
       }
     }
   }
 
   getPlanoEtiquetagem(jobId: string): PlanoEtiquetagemJob | null { return this.planosEtiquetagem.get(jobId) ?? null; }
+
+  async obterArquivo(jobId: string, formato: FormatoSaidaDigito): Promise<string | null> {
+    const progress = this.progressMap.get(jobId);
+    if (!progress || progress.status !== 'completed' || !progress.fileName) return null;
+    const saida = this.saidas.get(jobId);
+    if (!saida) return progress.fileName.endsWith(`.${formato}`) ? progress.fileName : null;
+
+    const existente = saida.arquivos[formato];
+    if (existente) {
+      const arquivo = await existente.catch(() => null);
+      if (arquivo && fs.existsSync(arquivo.filePath)) return arquivo.fileName;
+      if (saida.arquivos[formato] === existente) delete saida.arquivos[formato];
+    }
+
+    let geracao = saida.arquivos[formato];
+    if (!geracao) {
+      const [distribuicao, digitosPorServidor, , id, ...resto] = saida.parametros;
+      geracao = gerarSaidaDigito(distribuicao, digitosPorServidor, formato, id, ...resto);
+      saida.arquivos[formato] = geracao;
+      geracao.catch(() => { if (saida.arquivos[formato] === geracao) delete saida.arquivos[formato]; });
+    }
+    return path.basename((await geracao).fileName);
+  }
 
   cancel(jobId: string): void {
     this.cancelledJobs.add(jobId);
@@ -101,7 +136,7 @@ export class PlanilhaDigitoService {
       const pesos: ConfigPeso = { ...CONFIG_PESO_PADRAO, ...(dto.pesos ?? {}) };
       const modoDigito: ModoDigito = dto.modoDigito ?? 'sequencial';
       const mapa = montarMapaAtribuicoes(dto.atribuicoes);
-      const etiquetasServidor = montarMapaEtiquetas(dto.etiquetasServidor, mapa);
+      const etiquetasDigito = montarMapaEtiquetas(dto.atribuicoes, mapa, dto.etiquetasServidor);
 
       const session = await resolveSessionFromDto(dto);
 
@@ -160,7 +195,7 @@ export class PlanilhaDigitoService {
       });
 
       // A distribuição vem antes do peso: as flags de etiqueta (dígito) entram no bloco D.
-      const distribuicao = distribuirPorServidor(processos, mapa, etiquetasServidor);
+      const distribuicao = distribuirPorServidor(processos, mapa, etiquetasDigito);
 
       // "Meta a um passo" = restantes por meta no acervo analisado (a base de
       // conclusos do gabinete ainda não entra nesta contagem).
@@ -180,20 +215,25 @@ export class PlanilhaDigitoService {
         digitosPorServidor.set(servidor, [...(digitosPorServidor.get(servidor) ?? []), digito]);
       }
 
-      const { fileName } = await gerarSaidaDigito(
+      const parametros: Parameters<typeof gerarSaidaDigito> = [
         distribuicao, digitosPorServidor, dto.formato, jobId, pesos, metasRestantes, dto.reduzida === true, modoDigito,
-      );
+      ];
+      const saidaInicial = gerarSaidaDigito(...parametros);
+      const { fileName } = await saidaInicial;
+      this.saidas.set(jobId, { parametros, arquivos: { [dto.formato]: saidaInicial } });
+      const expiracao = setTimeout(() => this.saidas.delete(jobId), SAIDA_TTL_MS);
+      if (typeof expiracao.unref === 'function') expiracao.unref();
 
       const resumo = this.montarResumo(distribuicao, digitosPorServidor, mapa, metasRestantes, pesos, processos);
 
-      if (etiquetasServidor.size > 0) {
-        const itens = planejarEtiquetagem(distribuicao.porServidor, etiquetasServidor);
-        this.planosEtiquetagem.set(jobId, { itens, etiquetas: etiquetasServidor });
+      if (etiquetasDigito.size > 0) {
+        const itens = planejarEtiquetagem(distribuicao.porServidor, etiquetasDigito);
+        this.planosEtiquetagem.set(jobId, { itens, etiquetas: etiquetasDigito });
         resumo.etiquetagem = {
           inserir: itens.filter((i) => i.inserir).length,
           remover: itens.reduce((n, i) => n + i.remover.length, 0),
           processosAfetados: itens.length,
-          servidoresSemEtiqueta: [...distribuicao.porServidor.keys()].filter((s) => !etiquetasServidor.has(s)),
+          servidoresSemEtiqueta: [...new Set([...mapa].filter(([d]) => !etiquetasDigito.has(d)).map(([, s]) => s))],
         };
       }
 

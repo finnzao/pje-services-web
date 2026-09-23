@@ -17,11 +17,30 @@ import {
   isLoginFormReappearing,
 } from './html-parser';
 import { PJE_BASE } from './constants';
-import type { PJELoginResult, PJEProfileResult, PJEUserInfo } from './types';
+import type { PJELoginResult, PJEProfile, PJEProfileResult, PJEUserInfo, StoredSession } from './types';
 
 const MAX_LOGIN_RETRIES = 3;
 
 const LOGIN_RETRY_DELAY = 3000;
+
+const PAGINA_PERFIS_TTL_MS = 5 * 60 * 1000;
+
+interface PaginaPerfis { html: string; viewState: string; em: number; }
+
+const paginasPerfis = new Map<string, PaginaPerfis>();
+const atualizacoesPerfis = new Map<string, Promise<unknown>>();
+
+function guardarPaginaPerfis(sessionId: string, pagina: PaginaPerfis): void {
+  for (const [id, p] of paginasPerfis) {
+    if (pagina.em - p.em >= PAGINA_PERFIS_TTL_MS) paginasPerfis.delete(id);
+  }
+  paginasPerfis.set(sessionId, pagina);
+}
+
+function mesmoNomePerfil(a: string, b: string): boolean {
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
+  return norm(a) === norm(b);
+}
 
 export class PJEAuthProxy {
   private cookieJar = new CookieJar();
@@ -29,6 +48,7 @@ export class PJEAuthProxy {
   private idUsuarioLocalizacao = '';
   private idUsuario: number | undefined;
   private cpf = '';
+  private usuarioSelecionado: any = null;
 
   async login(cpf: string, password: string): Promise<PJELoginResult> {
     this.cpf = cpf;
@@ -147,10 +167,32 @@ export class PJEAuthProxy {
 
   async selectProfile(sessionId: string, profileIndex: number): Promise<PJEProfileResult> {
     try {
+      const pendente = atualizacoesPerfis.get(sessionId);
+      if (pendente) await pendente;
+
       const stored = sessionStore.get(sessionId);
       if (!stored) return emptyResult('SESSION_EXPIRED');
 
       this.restoreFromSession(stored);
+      const localizacaoAnterior = this.idUsuarioLocalizacao;
+
+      const pagina = paginasPerfis.get(sessionId);
+      paginasPerfis.delete(sessionId);
+      if (pagina && Date.now() - pagina.em < PAGINA_PERFIS_TTL_MS) {
+        try {
+          const situacao = await this.selecionarNaPagina(stored, pagina.html, pagina.viewState, profileIndex);
+          if (situacao === 'ok' && this.idUsuarioLocalizacao && this.idUsuarioLocalizacao !== localizacaoAnterior) {
+            console.log('[PJE-AUTH] Perfil selecionado reaproveitando a página de perfis');
+            return await this.concluirSelecao(stored);
+          }
+          console.log('[PJE-AUTH] Página de perfis reaproveitada não confirmou a troca; recarregando');
+        } catch (err) {
+          console.warn('[PJE-AUTH] Falha ao reaproveitar a página de perfis; recarregando:', err instanceof Error ? err.message : err);
+        }
+        this.idUsuarioLocalizacao = localizacaoAnterior;
+        this.idUsuario = stored.idUsuario;
+        this.usuarioSelecionado = null;
+      }
 
       const profilePage = await this.http.followRedirects('GET', `${PJE_BASE}/pje/ng2/dev.seam`);
 
@@ -173,7 +215,7 @@ export class PJEAuthProxy {
         }
       }
 
-      let viewState = extractViewState(html);
+      const viewState = extractViewState(html);
       if (!viewState) {
         console.error(`[PJE-AUTH] ViewState não encontrado. URL: ${currentUrl}`);
         if (this.cpf) clearPersistedSession(this.cpf);
@@ -181,45 +223,71 @@ export class PJEAuthProxy {
         return emptyResult('SESSION_EXPIRED');
       }
 
-      if (profileIndex >= 0) {
-        const visibleIndices = extractVisibleIndices(html);
-        const targetPage = getPageForIndex(profileIndex);
-        const currentPage = extractCurrentPage(html);
-        const totalPages = extractTotalPages(html);
-
-        console.log(`[PJE-AUTH] Índices visíveis: [${visibleIndices.join(', ')}]`);
-        console.log(`[PJE-AUTH] Índice ${profileIndex} → página ${targetPage} (atual: ${currentPage}, total: ${totalPages})`);
-
-        if (!visibleIndices.includes(profileIndex) && hasPagination(html)) {
-          const navResult = await this.navigateToPage(html, viewState, targetPage);
-          if (navResult) {
-            html = navResult.html;
-            viewState = navResult.viewState;
-          } else {
-            console.warn(`[PJE-AUTH] Não conseguiu navegar para página ${targetPage}`);
-          }
-        }
+      const situacao = await this.selecionarNaPagina(stored, html, viewState, profileIndex);
+      if (situacao === 'perfis_alterados') {
+        return emptyResult('A lista de perfis mudou no PJE. Faça login novamente para escolher o perfil.');
       }
-
-      await this.executeProfileSelection(html, viewState, profileIndex);
-
-      const user = await this.fetchCurrentUser();
-      if (user?.idUsuarioLocalizacaoMagistradoServidor) {
-        this.idUsuarioLocalizacao = String(user.idUsuarioLocalizacaoMagistradoServidor);
-        this.idUsuario = user.idUsuario;
-        console.log(`[PJE-AUTH] idUsuarioLocalizacao: ${this.idUsuarioLocalizacao}`);
-      }
-
-      stored.cookies = this.cookieJar.exportAll();
-      stored.idUsuarioLocalizacao = this.idUsuarioLocalizacao;
-      stored.idUsuario = this.idUsuario;
-      this.persistSession(user);
-
-      return await this.fetchTasksAndTags();
+      return await this.concluirSelecao(stored);
     } catch (err) {
       console.error('[PJE-AUTH] Erro em selectProfile:', err);
       return emptyResult(err instanceof Error ? err.message : 'Erro ao selecionar perfil');
     }
+  }
+
+  private async selecionarNaPagina(
+    stored: StoredSession,
+    htmlInicial: string,
+    viewStateInicial: string,
+    profileIndex: number,
+  ): Promise<'ok' | 'perfis_alterados'> {
+    let html = htmlInicial;
+    let viewState = viewStateInicial;
+
+    if (profileIndex >= 0) {
+      const visibleIndices = extractVisibleIndices(html);
+      const targetPage = getPageForIndex(profileIndex);
+      const currentPage = extractCurrentPage(html);
+      const totalPages = extractTotalPages(html);
+
+      console.log(`[PJE-AUTH] Índices visíveis: [${visibleIndices.join(', ')}]`);
+      console.log(`[PJE-AUTH] Índice ${profileIndex} → página ${targetPage} (atual: ${currentPage}, total: ${totalPages})`);
+
+      if (!visibleIndices.includes(profileIndex) && hasPagination(html)) {
+        const navResult = await this.navigateToPage(html, viewState, targetPage);
+        if (navResult) {
+          html = navResult.html;
+          viewState = navResult.viewState;
+        } else {
+          console.warn(`[PJE-AUTH] Não conseguiu navegar para página ${targetPage}`);
+        }
+      }
+    }
+
+    const esperado = stored.perfisExibidos?.find((p) => p.indice === profileIndex);
+    const atual = extractProfilesFromHtml(html).find((p) => p.indice === profileIndex);
+    if (esperado && atual && !mesmoNomePerfil(esperado.nome, atual.nome)) {
+      console.warn(`[PJE-AUTH] Perfil ${profileIndex} mudou: exibido "${esperado.nome}", atual "${atual.nome}"`);
+      return 'perfis_alterados';
+    }
+
+    await this.executeProfileSelection(html, viewState, profileIndex);
+
+    const user = await this.fetchCurrentUser();
+    if (user?.idUsuarioLocalizacaoMagistradoServidor) {
+      this.idUsuarioLocalizacao = String(user.idUsuarioLocalizacaoMagistradoServidor);
+      this.idUsuario = user.idUsuario;
+      console.log(`[PJE-AUTH] idUsuarioLocalizacao: ${this.idUsuarioLocalizacao}`);
+    }
+    this.usuarioSelecionado = user;
+    return 'ok';
+  }
+
+  private async concluirSelecao(stored: StoredSession): Promise<PJEProfileResult> {
+    stored.cookies = this.cookieJar.exportAll();
+    stored.idUsuarioLocalizacao = this.idUsuarioLocalizacao;
+    stored.idUsuario = this.idUsuario;
+    this.persistSession(this.usuarioSelecionado);
+    return await this.fetchTasksAndTags();
   }
 
   private async navigateToPage(
@@ -291,6 +359,11 @@ export class PJEAuthProxy {
 
     stored.cookies = this.cookieJar.exportAll();
     sessionStore.set(sessionId, stored);
+    if (viewState) guardarPaginaPerfis(sessionId, { html, viewState, em: Date.now() });
+    if (this.cpf && allProfiles.length > 0) {
+      const persistida = getPersistedSession(this.cpf);
+      if (persistida) savePersistedSession(this.cpf, { ...persistida, cookies: this.cookieJar.exportAll(), profiles: allProfiles });
+    }
 
     return { needs2FA: false, sessionId, profiles: allProfiles };
   }
@@ -324,27 +397,46 @@ export class PJEAuthProxy {
     this.idUsuarioLocalizacao = String(user.idUsuarioLocalizacaoMagistradoServidor || '');
     this.idUsuario = user.idUsuario;
 
+    const perfisCache = persisted.profiles ?? [];
     const sid = generateSessionId();
     sessionStore.set(sid, {
       cookies: this.cookieJar.exportAll(),
       idUsuarioLocalizacao: this.idUsuarioLocalizacao,
       idUsuario: this.idUsuario,
       cpf: this.cpf,
+      ...(perfisCache.length > 0 ? { perfisExibidos: perfisCache } : {}),
     });
     savePersistedSession(cpf, {
       cookies: this.cookieJar.exportAll(),
       idUsuarioLocalizacao: this.idUsuarioLocalizacao,
       idUsuario: this.idUsuario,
       user: this.mapUser(user),
+      profiles: persisted.profiles,
     });
 
+    if (perfisCache.length > 0) {
+      console.log(`[PJE-AUTH] ${perfisCache.length} perfis do cache; atualizando em segundo plano`);
+      const atualizacao: Promise<unknown> = this.getAllProfiles(sid)
+        .catch((err) => console.warn('[PJE-AUTH] Atualização de perfis em segundo plano falhou:', err instanceof Error ? err.message : err))
+        .finally(() => { if (atualizacoesPerfis.get(sid) === atualizacao) atualizacoesPerfis.delete(sid); });
+      atualizacoesPerfis.set(sid, atualizacao);
+      return { needs2FA: false, sessionId: sid, user: this.mapUser(user), profiles: perfisCache };
+    }
+
     const profileResult = await this.getAllProfiles(sid);
+    this.registrarPerfisExibidos(sid, profileResult.profiles);
     return {
       needs2FA: false,
       sessionId: sid,
       user: this.mapUser(user),
       profiles: profileResult.profiles || [],
     };
+  }
+
+  private registrarPerfisExibidos(sessionId: string, perfis: PJEProfile[] | undefined): void {
+    if (!perfis?.length) return;
+    const stored = sessionStore.get(sessionId);
+    if (stored) sessionStore.set(sessionId, { ...stored, perfisExibidos: perfis });
   }
 
   private async submitCredentials(
@@ -432,6 +524,7 @@ export class PJEAuthProxy {
     this.persistSession(user);
 
     const profileResult = await this.getAllProfiles(sid);
+    this.registrarPerfisExibidos(sid, profileResult.profiles);
 
     return {
       needs2FA: false,
@@ -512,6 +605,7 @@ export class PJEAuthProxy {
       idUsuarioLocalizacao: this.idUsuarioLocalizacao,
       idUsuario: this.idUsuario ?? user?.idUsuario,
       user: user ? this.mapUser(user) : undefined,
+      profiles: getPersistedSession(this.cpf)?.profiles,
     });
   }
 

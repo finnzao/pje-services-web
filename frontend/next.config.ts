@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    proxyTimeout: 300_000,
+  },
   // Proxy API requests to the backend to avoid CORS issues with EventSource (SSE).
   // In production NEXT_PUBLIC_API_URL must point to the deployed API; in local
   // development it falls back to the backend dev server (default port 10000).

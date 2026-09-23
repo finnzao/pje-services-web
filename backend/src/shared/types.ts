@@ -49,7 +49,7 @@ export interface PlanilhaAdvogadosResult {
 
 // ───────────────────────── Planilha administrativa por dígito ─────────────────────────
 
-export interface AtribuicaoDigito { digito: number; servidor: string; }
+export interface AtribuicaoDigito { digito: number; servidor: string; etiqueta?: EtiquetaServidorRef; }
 
 export interface EtiquetaServidorRef { id: number; nome: string; }
 /** Etiqueta do PJE que identifica o servidor na automação por dígito. */

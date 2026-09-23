@@ -2,9 +2,33 @@ import { CookieJar } from './cookie-jar';
 import { PJE_REST_BASE, PJE_FRONTEND_ORIGIN, PJE_LEGACY_APP, MAX_REDIRECTS } from './constants';
 import { resolveUrl } from './html-parser';
 import type { FollowRedirectsResult } from './types';
+import { isAbortError, requestSignal } from '../../../../shared/abortable';
+
+const AUTH_REQUEST_TIMEOUT_MS = 40_000;
 
 export class PJEHttpClient {
   constructor(private cookieJar: CookieJar) {}
+
+  private async requisitar(url: string, init: RequestInit): Promise<Response> {
+    const inicio = Date.now();
+    const alvo = `${safeDomain(url)}${safePath(url)}`;
+    const noSessao = this.cookieJar.getCookie('pje.tjba.jus.br', 'JSESSIONID')?.split('.').pop();
+    const noBalanceador = this.cookieJar.getCookie('pje.tjba.jus.br', 'FADC_PJE')?.split('|')[0];
+    if (safeDomain(url) === 'pje.tjba.jus.br' && noSessao && noBalanceador && noSessao !== noBalanceador) {
+      console.warn(`[PJE-AUTH]     ⚠ JSESSIONID é do nó ${noSessao}, mas FADC_PJE aponta para ${noBalanceador}`);
+    }
+    try {
+      const res = await fetch(url, { ...init, signal: requestSignal(undefined, AUTH_REQUEST_TIMEOUT_MS) });
+      console.log(`[PJE-AUTH]     ← ${res.status} ${alvo} em ${Date.now() - inicio} ms`);
+      return res;
+    } catch (err) {
+      console.error(`[PJE-AUTH]     ✗ ${alvo} falhou após ${Date.now() - inicio} ms:`, err instanceof Error ? err.message : err);
+      if (isAbortError(err)) {
+        throw new Error(`O PJE não respondeu em ${AUTH_REQUEST_TIMEOUT_MS / 1000} s. Tente novamente em instantes.`);
+      }
+      throw err;
+    }
+  }
 
   async followRedirects(
     method: 'GET' | 'POST',
@@ -48,7 +72,7 @@ export class PJEHttpClient {
         }
       }
 
-      const res = await fetch(currentUrl, {
+      const res = await this.requisitar(currentUrl, {
         method: currentMethod,
         headers,
         body: currentMethod === 'POST' && currentBody ? currentBody.toString() : undefined,
@@ -86,7 +110,7 @@ export class PJEHttpClient {
         if (loopDetected && nextUrl.includes('sso.cloud.pje.jus.br') && currentUrl.includes('pje.tjba.jus.br')) {
           console.warn(`[PJE-AUTH]   ⚠️ Interrompendo cadeia de redirects (PJE→SSO loop)`);
           // Follow this last redirect to get the SSO page
-          const loopRes = await fetch(nextUrl, {
+          const loopRes = await this.requisitar(nextUrl, {
             method: 'GET',
             headers: {
               'Cookie': this.cookieJar.serializeForDomain(nextUrl),
@@ -102,7 +126,7 @@ export class PJEHttpClient {
             await loopRes.text().catch(() => {});
             if (finalLocation) {
               const finalUrl = resolveUrl(finalLocation, nextUrl);
-              const finalRes = await fetch(finalUrl, {
+              const finalRes = await this.requisitar(finalUrl, {
                 method: 'GET',
                 headers: {
                   'Cookie': this.cookieJar.serializeForDomain(finalUrl),
@@ -135,12 +159,12 @@ export class PJEHttpClient {
 
   async apiGet<T = any>(endpoint: string, idUsuarioLocalizacao: string): Promise<T> {
     const url = `${PJE_REST_BASE}/${endpoint}`;
-    const res = await fetch(url, {
+    const res = await this.requisitar(url, {
       method: 'GET',
       headers: this.buildRestHeaders(idUsuarioLocalizacao),
       redirect: 'follow',
     });
-    this.cookieJar.extractFromResponse(res, url);
+    this.cookieJar.extractFromResponse(res, res.url || url);
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) return (await res.json()) as T;
     return (await res.text()) as unknown as T;
@@ -148,13 +172,13 @@ export class PJEHttpClient {
 
   async apiPost<T = any>(endpoint: string, body: Record<string, unknown>, idUsuarioLocalizacao: string): Promise<T> {
     const url = `${PJE_REST_BASE}/${endpoint}`;
-    const res = await fetch(url, {
+    const res = await this.requisitar(url, {
       method: 'POST',
       headers: this.buildRestHeaders(idUsuarioLocalizacao),
       body: JSON.stringify(body),
       redirect: 'follow',
     });
-    this.cookieJar.extractFromResponse(res, url);
+    this.cookieJar.extractFromResponse(res, res.url || url);
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) return (await res.json()) as T;
     return (await res.text()) as unknown as T;

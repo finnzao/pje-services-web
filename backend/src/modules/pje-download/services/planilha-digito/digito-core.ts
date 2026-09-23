@@ -145,13 +145,20 @@ export function extrairDigito(
   return { digito: Number(soDigitos[posicao]), ano: Number(soDigitos.slice(9, 13)) };
 }
 
+function digitoValido(digito: unknown): digito is number {
+  return Number.isInteger(digito) && (digito as number) >= 0 && (digito as number) <= 9;
+}
+
 /** Valida e indexa as atribuições dígito → servidor (última atribuição do dígito vence). */
 export function montarMapaAtribuicoes(atribuicoes: AtribuicaoDigito[]): Map<number, string> {
   const mapa = new Map<number, string>();
+  const canonicos = new Map<string, string>();
   for (const a of atribuicoes || []) {
     const servidor = (a?.servidor || '').trim();
-    if (!Number.isInteger(a?.digito) || a.digito < 0 || a.digito > 9 || !servidor) continue;
-    mapa.set(a.digito, servidor);
+    if (!digitoValido(a?.digito) || !servidor) continue;
+    const chave = normalizarTexto(servidor);
+    if (!canonicos.has(chave)) canonicos.set(chave, servidor);
+    mapa.set(a.digito, canonicos.get(chave)!);
   }
   return mapa;
 }
@@ -423,39 +430,91 @@ export interface ResultadoDistribuicao {
   naoAtribuidos: ProcessoDigito[];
 }
 
-/** servidor → etiqueta, só para servidores presentes na atribuição e com etiqueta válida. */
-export function montarMapaEtiquetas(
-  etiquetas: EtiquetaServidor[] | undefined,
-  mapa: Map<number, string>,
-): Map<string, EtiquetaServidorRef> {
-  const out = new Map<string, EtiquetaServidorRef>();
-  const servidores = new Set(mapa.values());
-  for (const item of etiquetas ?? []) {
-    const servidor = (item?.servidor ?? '').trim();
-    const id = Number(item?.etiqueta?.id);
-    const nome = (item?.etiqueta?.nome ?? '').trim();
-    if (!servidores.has(servidor) || !Number.isInteger(id) || id <= 0 || !nome) continue;
-    out.set(servidor, { id, nome });
-  }
-  return out;
+function refEtiquetaValida(etiqueta: unknown): EtiquetaServidorRef | null {
+  if (!etiqueta || typeof etiqueta !== 'object') return null;
+  const e = etiqueta as Record<string, unknown>;
+  const id = Number(e.id);
+  const nome = typeof e.nome === 'string' ? e.nome.trim() : '';
+  return Number.isInteger(id) && id > 0 && nome ? { id, nome } : null;
 }
 
-// Com etiqueta vinculada a comparação é exata; sem ela, vale o nome do servidor contido na tag.
-function servidoresEtiquetados(
-  etiquetas: string[],
-  servidoresNorm: Map<string, string>,
-  etiquetasServidor: Map<string, EtiquetaServidorRef>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const tag of etiquetas) {
-    const tagNorm = normalizarTexto(tag);
-    for (const [nomeNorm, nomeOriginal] of servidoresNorm) {
-      const vinculada = etiquetasServidor.get(nomeOriginal);
-      const bate = vinculada ? tagNorm === normalizarTexto(vinculada.nome) : tagNorm.includes(nomeNorm);
-      if (bate) out.add(nomeOriginal);
+export function montarMapaEtiquetas(
+  atribuicoes: AtribuicaoDigito[] | undefined,
+  mapa: Map<number, string>,
+  etiquetasServidor?: EtiquetaServidor[],
+): Map<number, EtiquetaServidorRef> {
+  const porDigito = new Map<number, EtiquetaServidorRef>();
+  for (const a of atribuicoes ?? []) {
+    if (!digitoValido(a?.digito) || !(a.servidor || '').trim() || !mapa.has(a.digito)) continue;
+    const ref = refEtiquetaValida(a.etiqueta);
+    if (ref) porDigito.set(a.digito, ref);
+    else porDigito.delete(a.digito);
+  }
+
+  for (const item of etiquetasServidor ?? []) {
+    const chave = normalizarTexto(item?.servidor ?? '');
+    const ref = refEtiquetaValida(item?.etiqueta);
+    if (!chave || !ref) continue;
+    for (const [digito, servidor] of mapa) {
+      if (!porDigito.has(digito) && normalizarTexto(servidor) === chave) porDigito.set(digito, ref);
     }
   }
-  return out;
+
+  const donoPorId = new Map<number, string>();
+  for (const [digito, ref] of [...porDigito].sort((a, b) => a[0] - b[0])) {
+    const dono = mapa.get(digito)!;
+    const atual = donoPorId.get(ref.id);
+    if (atual === undefined) donoPorId.set(ref.id, dono);
+    else if (atual !== dono) porDigito.delete(digito);
+  }
+  return porDigito;
+}
+
+interface IndiceEtiquetas {
+  vinculadas: Map<string, EtiquetaServidorRef>;
+  semVinculo: Map<string, string>;
+}
+
+function indexarEtiquetas(mapa: Map<number, string>, etiquetasDigito: Map<number, EtiquetaServidorRef>): IndiceEtiquetas {
+  const vinculadas = new Map<string, EtiquetaServidorRef>();
+  const comVinculo = new Set<string>();
+  for (const [digito, ref] of etiquetasDigito) {
+    const servidor = mapa.get(digito);
+    if (!servidor) continue;
+    comVinculo.add(servidor);
+    const nome = normalizarTexto(ref.nome);
+    if (!vinculadas.has(nome)) vinculadas.set(nome, ref);
+  }
+  const semVinculo = new Map<string, string>();
+  for (const servidor of new Set(mapa.values())) {
+    if (!comVinculo.has(servidor)) semVinculo.set(normalizarTexto(servidor), servidor);
+  }
+  return { vinculadas, semVinculo };
+}
+
+function auditarEtiquetas(
+  etiquetas: string[],
+  servidor: string,
+  propria: EtiquetaServidorRef | undefined,
+  indice: IndiceEtiquetas,
+): { temPropria: boolean; divergente: boolean } {
+  const propriaNorm = propria ? normalizarTexto(propria.nome) : null;
+  const servidorNorm = normalizarTexto(servidor);
+  let temPropria = false;
+  let divergente = false;
+  for (const tag of etiquetas) {
+    const tagNorm = normalizarTexto(tag);
+    if (indice.vinculadas.has(tagNorm)) {
+      if (tagNorm === propriaNorm) temPropria = true;
+      else divergente = true;
+      continue;
+    }
+    if (propriaNorm === null && tagNorm.includes(servidorNorm)) temPropria = true;
+    for (const [nomeNorm, outro] of indice.semVinculo) {
+      if (outro !== servidor && tagNorm.includes(nomeNorm)) divergente = true;
+    }
+  }
+  return { temPropria, divergente };
 }
 
 /**
@@ -467,22 +526,20 @@ function servidoresEtiquetados(
 export function distribuirPorServidor(
   processos: ProcessoDigito[],
   mapa: Map<number, string>,
-  etiquetasServidor: Map<string, EtiquetaServidorRef> = new Map(),
+  etiquetasDigito: Map<number, EtiquetaServidorRef> = new Map(),
 ): ResultadoDistribuicao {
   const porServidor = new Map<string, ProcessoDigito[]>();
   for (const servidor of new Set(mapa.values())) porServidor.set(servidor, []);
   const naoAtribuidos: ProcessoDigito[] = [];
-
-  const servidoresNorm = new Map<string, string>();
-  for (const servidor of new Set(mapa.values())) servidoresNorm.set(normalizarTexto(servidor), servidor);
+  const indice = indexarEtiquetas(mapa, etiquetasDigito);
 
   for (const proc of processos) {
     const servidor = proc.digito !== null ? mapa.get(proc.digito) : undefined;
-    const etiquetadosPara = servidoresEtiquetados(proc.etiquetas, servidoresNorm, etiquetasServidor);
 
-    if (servidor) {
-      if (!etiquetadosPara.has(servidor)) proc.flags.push(FLAGS.SEM_ETIQUETA_DIGITO);
-      if ([...etiquetadosPara].some((s) => s !== servidor)) proc.flags.push(FLAGS.DIGITO_DIVERGENTE);
+    if (servidor && proc.digito !== null) {
+      const { temPropria, divergente } = auditarEtiquetas(proc.etiquetas, servidor, etiquetasDigito.get(proc.digito), indice);
+      if (!temPropria) proc.flags.push(FLAGS.SEM_ETIQUETA_DIGITO);
+      if (divergente) proc.flags.push(FLAGS.DIGITO_DIVERGENTE);
       proc.servidor = servidor;
       porServidor.get(servidor)!.push(proc);
     } else {
@@ -502,30 +559,26 @@ export interface ItemEtiquetagem {
   remover: EtiquetaServidorRef[];
 }
 
-/**
- * Plano de etiquetagem: cada processo atribuído recebe a etiqueta do seu servidor
- * e perde as etiquetas dos demais servidores. Servidor sem etiqueta fica de fora.
- */
 export function planejarEtiquetagem(
   porServidor: Map<string, ProcessoDigito[]>,
-  etiquetasServidor: Map<string, EtiquetaServidorRef>,
+  etiquetasDigito: Map<number, EtiquetaServidorRef>,
 ): ItemEtiquetagem[] {
-  const plano: ItemEtiquetagem[] = [];
-  const donos = new Map<string, { servidor: string; etiqueta: EtiquetaServidorRef }>();
-  for (const [servidor, etiqueta] of etiquetasServidor) {
-    donos.set(normalizarTexto(etiqueta.nome), { servidor, etiqueta });
+  const vinculadas = new Map<string, EtiquetaServidorRef>();
+  for (const ref of etiquetasDigito.values()) {
+    const nome = normalizarTexto(ref.nome);
+    if (!vinculadas.has(nome)) vinculadas.set(nome, ref);
   }
 
+  const plano: ItemEtiquetagem[] = [];
   for (const [servidor, lista] of porServidor) {
-    const propria = etiquetasServidor.get(servidor);
-    if (!propria) continue;
-    const propriaNorm = normalizarTexto(propria.nome);
-
     for (const proc of lista) {
+      const propria = proc.digito !== null ? etiquetasDigito.get(proc.digito) : undefined;
+      if (!propria) continue;
+      const propriaNorm = normalizarTexto(propria.nome);
       const atuais = new Set(proc.etiquetas.map(normalizarTexto));
       const remover: EtiquetaServidorRef[] = [];
-      for (const [nomeNorm, dono] of donos) {
-        if (nomeNorm !== propriaNorm && dono.servidor !== servidor && atuais.has(nomeNorm)) remover.push(dono.etiqueta);
+      for (const [nomeNorm, ref] of vinculadas) {
+        if (nomeNorm !== propriaNorm && ref.id !== propria.id && atuais.has(nomeNorm)) remover.push(ref);
       }
       const inserir = atuais.has(propriaNorm) ? undefined : propria;
       if (!inserir && remover.length === 0) continue;

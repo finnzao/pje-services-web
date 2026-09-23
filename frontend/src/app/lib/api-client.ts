@@ -38,7 +38,7 @@ export async function request<T>(
       throw new ApiError(res.status, errorMsg, body);
     }
 
-    return (body?.data ?? body) as T;
+    return (body && typeof body === 'object' && 'data' in body ? body.data : body) as T;
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (err instanceof TypeError && err.message === 'Failed to fetch')

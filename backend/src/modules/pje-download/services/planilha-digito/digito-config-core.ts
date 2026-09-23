@@ -19,13 +19,13 @@ function lerServidores(raw: unknown, erros: string[]): ServidorConfigDigito[] {
   if (raw.length > MAX_SERVIDORES) erros.push(`No máximo ${MAX_SERVIDORES} servidores.`);
 
   const digitosUsados = new Set<number>();
-  const etiquetasUsadas = new Set<number>();
-  const nomesUsados = new Set<string>();
+  const donosEtiqueta = new Map<number, string>();
   const out: ServidorConfigDigito[] = [];
 
   for (const item of raw.slice(0, MAX_SERVIDORES)) {
     const s = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
     const nome = typeof s.nome === 'string' ? s.nome.trim().slice(0, MAX_NOME) : '';
+    const nomeNorm = normalizarTexto(nome);
     const digitosBrutos = Array.isArray(s.digitos) ? s.digitos : [];
     const digitos: number[] = [];
     for (const d of digitosBrutos) {
@@ -41,17 +41,14 @@ function lerServidores(raw: unknown, erros: string[]): ServidorConfigDigito[] {
       const e = s.etiqueta as Record<string, unknown>;
       const id = Number(e.id);
       const nomeTag = typeof e.nome === 'string' ? e.nome.trim() : '';
-      if (Number.isInteger(id) && id > 0 && nomeTag && !etiquetasUsadas.has(id)) {
-        etiquetasUsadas.add(id);
+      const dono = donosEtiqueta.get(id);
+      if (Number.isInteger(id) && id > 0 && nomeTag && (dono === undefined || (nome && dono === nomeNorm))) {
+        if (dono === undefined) donosEtiqueta.set(id, nome ? nomeNorm : `#${out.length}`);
         etiqueta = { id, nome: nomeTag };
       }
     }
 
-    // Linha vazia não vale a pena guardar; nome repetido fica só na primeira ocorrência.
     if (!nome && digitos.length === 0) continue;
-    const nomeNorm = normalizarTexto(nome);
-    if (nome && nomesUsados.has(nomeNorm)) { erros.push(`Servidor repetido: "${nome}".`); continue; }
-    if (nome) nomesUsados.add(nomeNorm);
 
     out.push(etiqueta ? { nome, digitos, etiqueta } : { nome, digitos });
   }

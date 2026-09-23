@@ -20,21 +20,29 @@ export class CookieJar {
     const domainCookies = this.jar.get(domain)!;
     const newCookies: string[] = [];
 
+    const removidos: string[] = [];
     for (const raw of setCookieHeaders) {
-      const [pair] = raw.split(';');
+      const [pair, ...atributos] = raw.split(';');
       const eqIdx = pair.indexOf('=');
       if (eqIdx > 0) {
         const name = pair.slice(0, eqIdx).trim();
         const value = pair.slice(eqIdx + 1).trim();
         if (name && !name.startsWith('__')) {
-          domainCookies[name] = value;
-          newCookies.push(name);
+          if (cookieExpirado(atributos)) {
+            delete domainCookies[name];
+            removidos.push(name);
+          } else {
+            domainCookies[name] = value;
+            newCookies.push(name);
+          }
         }
       }
     }
 
     if (newCookies.length > 0)
       console.log(`[PJE-AUTH]     cookies set by ${domain}: ${newCookies.join(', ')}`);
+    if (removidos.length > 0)
+      console.log(`[PJE-AUTH]     cookies removed by ${domain}: ${removidos.join(', ')}`);
   }
 
   // Cookies apenas do domínio solicitado (para header Cookie)
@@ -141,4 +149,18 @@ export class CookieJar {
   clear(): void {
     this.jar.clear();
   }
+}
+
+function cookieExpirado(atributos: string[]): boolean {
+  for (const attr of atributos) {
+    const [chave, ...resto] = attr.split('=');
+    const nome = chave.trim().toLowerCase();
+    const valor = resto.join('=').trim();
+    if (nome === 'max-age' && Number(valor) <= 0) return true;
+    if (nome === 'expires') {
+      const quando = Date.parse(valor);
+      if (!Number.isNaN(quando) && quando <= Date.now()) return true;
+    }
+  }
+  return false;
 }

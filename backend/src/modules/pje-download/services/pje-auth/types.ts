@@ -51,6 +51,7 @@ export interface StoredSession {
   ssoHtml?: string;
   ssoFinalUrl?: string;
   cpf?: string;
+  perfisExibidos?: PJEProfile[];
   createdAt?: number;
 }
 
@@ -59,6 +60,7 @@ export interface PersistedSession {
   idUsuarioLocalizacao: string;
   idUsuario?: number;
   user?: PJEUserInfo;
+  profiles?: PJEProfile[];
   updatedAt: number;
 }
 

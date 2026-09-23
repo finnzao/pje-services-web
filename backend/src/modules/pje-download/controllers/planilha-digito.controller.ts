@@ -55,6 +55,15 @@ export function planilhaDigitoRoutes(service: PlanilhaDigitoService, etiquetagem
         dto.pesos = { ...dto.pesos, padroesFilaEspera: padroes };
       }
 
+      const etiquetasAtribuicoesOk = dto.atribuicoes.every((a) => a?.etiqueta === undefined
+        || (Number.isInteger(a.etiqueta?.id) && a.etiqueta.id > 0 && typeof a.etiqueta?.nome === 'string' && !!a.etiqueta.nome.trim()));
+      if (!etiquetasAtribuicoesOk) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_ETIQUETAS', message: 'A etiqueta de cada digito deve ter id e nome.', statusCode: 400 },
+        });
+      }
+
       if (dto.etiquetasServidor !== undefined) {
         const lista = Array.isArray(dto.etiquetasServidor) ? dto.etiquetasServidor : null;
         const ok = lista?.every((e) => !!e?.servidor?.trim() && Number.isInteger(e?.etiqueta?.id) && e.etiqueta.id > 0 && !!e?.etiqueta?.nome?.trim());
@@ -85,7 +94,7 @@ export function planilhaDigitoRoutes(service: PlanilhaDigitoService, etiquetagem
 
     // Resolve o arquivo PELO jobId (o nome carrega o jobId) — não repete o padrão
     // "arquivo mais recente do diretório" da rota de advogados.
-    fastify.get<{ Params: { jobId: string } }>('/:jobId/download', async (request, reply) => {
+    fastify.get<{ Params: { jobId: string }; Querystring: { formato?: string } }>('/:jobId/download', async (request, reply) => {
       const progress = service.getProgress(request.params.jobId);
       if (!progress || progress.status !== 'completed' || !progress.fileName) {
         return reply.status(404).send({
@@ -93,7 +102,28 @@ export function planilhaDigitoRoutes(service: PlanilhaDigitoService, etiquetagem
           error: { code: 'NOT_READY', message: 'Planilha ainda nao esta pronta.', statusCode: 404 },
         });
       }
-      const filePath = path.join(DOWNLOADS_DIR, path.basename(progress.fileName));
+      const { formato } = request.query;
+      if (formato !== undefined && formato !== 'xlsx' && formato !== 'zip') {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'INVALID_FORMATO', message: 'Formato deve ser xlsx ou zip.', statusCode: 400 },
+        });
+      }
+      let fileName: string | null = progress.fileName;
+      if (formato) {
+        try {
+          fileName = await service.obterArquivo(request.params.jobId, formato);
+        } catch (err) {
+          return handleServiceError(err, request, reply);
+        }
+      }
+      if (!fileName) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: 'FILE_NOT_FOUND', message: 'Arquivo expirado ou removido. Gere novamente.', statusCode: 404 },
+        });
+      }
+      const filePath = path.join(DOWNLOADS_DIR, path.basename(fileName));
       if (!fs.existsSync(filePath)) {
         return reply.status(404).send({
           success: false,

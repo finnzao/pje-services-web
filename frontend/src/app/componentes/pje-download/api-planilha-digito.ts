@@ -1,6 +1,6 @@
 import { API_BASE, request } from '../../lib/api-client';
 
-export interface AtribuicaoDigito { digito: number; servidor: string; }
+export interface AtribuicaoDigito { digito: number; servidor: string; etiqueta?: { id: number; nome: string }; }
 export interface EtiquetaServidor { servidor: string; etiqueta: { id: number; nome: string }; }
 
 /** sequencial = último algarismo antes do hífen · verificador1/2 = 1º/2º algarismo após o hífen. */
@@ -112,8 +112,8 @@ export async function cancelarPlanilhaDigito(jobId: string) {
 }
 
 /** Baixa o arquivo do job (xlsx ou zip) via fetch com o header x-user. */
-export async function downloadPlanilhaDigito(jobId: string): Promise<void> {
-  const url = `${API_BASE}/api/pje/planilha-digito/${jobId}/download`;
+export async function downloadPlanilhaDigito(jobId: string, formato?: 'xlsx' | 'zip'): Promise<void> {
+  const url = `${API_BASE}/api/pje/planilha-digito/${jobId}/download${formato ? `?formato=${formato}` : ''}`;
   const res = await fetch(url, {
     headers: {
       'x-user': JSON.stringify({ id: 1, name: 'Dr. João Magistrado', role: 'magistrado' }),
@@ -128,7 +128,7 @@ export async function downloadPlanilhaDigito(jobId: string): Promise<void> {
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition');
   const fileNameMatch = disposition?.match(/filename="?([^"]+)"?/);
-  const fileName = fileNameMatch?.[1] || `planilha_digito_${jobId.slice(0, 8)}.xlsx`;
+  const fileName = fileNameMatch?.[1] || `planilha_digito_${jobId.slice(0, 8)}.${formato ?? 'xlsx'}`;
 
   const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');

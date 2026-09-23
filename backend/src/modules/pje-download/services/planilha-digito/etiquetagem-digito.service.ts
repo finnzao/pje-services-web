@@ -7,7 +7,7 @@ import { resolveSessionFromDto } from '../pje-auth';
 import {
   inserirEtiquetaNoProcesso, listarEtiquetasDoPerfil, removerEtiquetaDoProcesso,
 } from '../../../etiquetas/pje-etiquetas-client';
-import { normalizarTexto, type ItemEtiquetagem } from './digito-core';
+import type { ItemEtiquetagem } from './digito-core';
 import type { PlanilhaDigitoService } from './planilha-digito.service';
 
 const APPLY_CONCURRENCY = 2;
@@ -18,9 +18,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+interface EtiquetaAlvo extends EtiquetaServidorRef { nomePje: string; }
+
 type Operacao =
-  | { tipo: 'inserir'; item: ItemEtiquetagem; etiqueta: EtiquetaServidorRef }
-  | { tipo: 'remover'; item: ItemEtiquetagem; etiqueta: EtiquetaServidorRef };
+  | { tipo: 'inserir'; item: ItemEtiquetagem; etiqueta: EtiquetaAlvo }
+  | { tipo: 'remover'; item: ItemEtiquetagem; etiqueta: EtiquetaAlvo };
 
 /**
  * Aplica no PJE o plano de etiquetagem calculado pela automação por dígito.
@@ -72,7 +74,7 @@ export class EtiquetagemDigitoService {
   private async executar(
     jobId: string,
     itens: ItemEtiquetagem[],
-    etiquetas: Map<string, EtiquetaServidorRef>,
+    etiquetas: Map<number, EtiquetaServidorRef>,
     dto: EtiquetarPorDigitoDTO,
   ): Promise<void> {
     const emit = (patch: Partial<EtiquetagemDigitoProgress>) => {
@@ -110,29 +112,26 @@ export class EtiquetagemDigitoService {
     }
   }
 
-  // O endpoint de inserir cria tag por nome, então cada etiqueta precisa existir no perfil.
   private async reconciliarEtiquetas(
     session: PjeSession,
-    etiquetas: Map<string, EtiquetaServidorRef>,
-  ): Promise<Map<string, EtiquetaServidorRef>> {
-    const disponiveis = await listarEtiquetasDoPerfil(session);
-    const out = new Map<string, EtiquetaServidorRef>();
-    for (const [servidor, etiqueta] of etiquetas) {
-      const alvo = disponiveis.find((t) => t.id === etiqueta.id)
-        ?? disponiveis.find((t) => normalizarTexto(t.nomeTag) === normalizarTexto(etiqueta.nome));
+    etiquetas: Map<number, EtiquetaServidorRef>,
+  ): Promise<Map<number, EtiquetaAlvo>> {
+    const disponiveis = new Map((await listarEtiquetasDoPerfil(session)).map((t) => [t.id, t]));
+    const out = new Map<number, EtiquetaAlvo>();
+    for (const [digito, etiqueta] of etiquetas) {
+      if (out.has(etiqueta.id)) continue;
+      const alvo = disponiveis.get(etiqueta.id);
       if (!alvo) {
-        throw new AppError('ETIQUETA_INEXISTENTE', `A etiqueta "${etiqueta.nome}" do servidor ${servidor} não existe mais no perfil da sessão.`, 422);
+        throw new AppError('ETIQUETA_INEXISTENTE', `A etiqueta "${etiqueta.nome}" (id ${etiqueta.id}) do dígito ${digito} não existe mais no perfil da sessão.`, 422);
       }
-      out.set(servidor, { id: alvo.id, nome: alvo.nomeTag });
+      const completo = (alvo.nomeTagCompleto || '').trim();
+      out.set(alvo.id, { id: alvo.id, nome: alvo.nomeTag, nomePje: completo || alvo.nomeTag });
     }
     return out;
   }
 
-  private montarFila(itens: ItemEtiquetagem[], etiquetas: Map<string, EtiquetaServidorRef>): Operacao[] {
-    const porId = new Map<number, EtiquetaServidorRef>();
-    for (const e of etiquetas.values()) porId.set(e.id, e);
-    const resolver = (ref: EtiquetaServidorRef) => porId.get(ref.id) ?? ref;
-
+  private montarFila(itens: ItemEtiquetagem[], etiquetas: Map<number, EtiquetaAlvo>): Operacao[] {
+    const resolver = (ref: EtiquetaServidorRef): EtiquetaAlvo => etiquetas.get(ref.id) ?? { ...ref, nomePje: ref.nome };
     const fila: Operacao[] = [];
     for (const item of itens) {
       for (const ref of item.remover) fila.push({ tipo: 'remover', item, etiqueta: resolver(ref) });
@@ -141,8 +140,33 @@ export class EtiquetagemDigitoService {
     return fila;
   }
 
+  private async inserirPorId(session: PjeSession, op: Operacao, suspensas: Map<number, string>): Promise<void> {
+    const { etiqueta, item } = op;
+    const suspensa = suspensas.get(etiqueta.id);
+    if (suspensa) throw new Error(suspensa);
+    const { idTag } = await inserirEtiquetaNoProcesso(session, etiqueta.nomePje, item.idProcesso);
+    if (idTag === etiqueta.id) return;
+    const desfeito = await removerEtiquetaDoProcesso(session, idTag, item.idProcesso).then(() => true, () => false);
+    if (!suspensas.has(etiqueta.id)) {
+      suspensas.set(etiqueta.id, `Etiqueta "${etiqueta.nomePje}" (id ${etiqueta.id}) suspensa: o PJE não a vinculou pelo id.`);
+    }
+    throw new Error(`O PJE vinculou a etiqueta id ${idTag} em vez da id ${etiqueta.id} ("${etiqueta.nomePje}")${desfeito ? '; vínculo desfeito' : '; remova o vínculo manualmente'}.`);
+  }
+
   private async aplicar(session: PjeSession, fila: Operacao[], jobId: string, cancelado: () => boolean): Promise<void> {
     let next = 0;
+    const primeiras = new Map<number, Promise<unknown>>();
+    const suspensas = new Map<number, string>();
+    const inserir = async (op: Operacao) => {
+      const primeira = primeiras.get(op.etiqueta.id);
+      if (primeira) {
+        await primeira;
+        return this.inserirPorId(session, op, suspensas);
+      }
+      const tentativa = this.inserirPorId(session, op, suspensas);
+      primeiras.set(op.etiqueta.id, tentativa.catch(() => undefined));
+      return tentativa;
+    };
 
     const registrar = (op: Operacao, acao: ProcessoEtiquetadoDigito['acao'], erro?: string) => {
       const atual = this.progressMap.get(jobId)!;
@@ -172,7 +196,7 @@ export class EtiquetagemDigitoService {
         const op = fila[idx];
         try {
           if (op.tipo === 'inserir') {
-            await inserirEtiquetaNoProcesso(session, op.etiqueta.nome, op.item.idProcesso);
+            await inserir(op);
             registrar(op, 'inserida');
           } else {
             await removerEtiquetaDoProcesso(session, op.etiqueta.id, op.item.idProcesso);

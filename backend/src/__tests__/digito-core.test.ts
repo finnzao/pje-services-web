@@ -66,6 +66,15 @@ describe('montarMapaAtribuicoes / selecionarTarefas', () => {
     expect([...mapa.entries()]).toEqual([[0, 'Abel'], [2, 'Abel']]);
   });
 
+  it('une o mesmo servidor sem distinção de caixa e acento', () => {
+    const mapa = montarMapaAtribuicoes([
+      { digito: 0, servidor: 'Abel' },
+      { digito: 2, servidor: 'ABEL' },
+      { digito: 4, servidor: ' ábel ' },
+    ]);
+    expect([...mapa.entries()]).toEqual([[0, 'Abel'], [2, 'Abel'], [4, 'Abel']]);
+  });
+
   it('exclui tarefas ignoradas sem sensibilidade a acento/caixa', () => {
     expect(selecionarTarefas(['Minutar decisão', 'Imprimir Expediente'], ['minutar DECISAO']))
       .toEqual(['Imprimir Expediente']);
@@ -319,15 +328,15 @@ describe('etiquetagem por dígito', () => {
     { digito: 9, servidor: 'Terezinha' },
     { digito: 4, servidor: 'Carol' },
   ]);
-  const etiquetas = montarMapaEtiquetas([
+  const etiquetas = montarMapaEtiquetas(undefined, mapa, [
     { servidor: 'Abel', etiqueta: { id: 10, nome: 'CCV_Abel' } },
     { servidor: 'Terezinha', etiqueta: { id: 20, nome: 'CCV_Terezinha' } },
     { servidor: 'Fulano', etiqueta: { id: 30, nome: 'CCV_Fulano' } },
     { servidor: 'Carol', etiqueta: { id: 0, nome: '' } },
-  ], mapa);
+  ]);
 
   it('só guarda etiquetas válidas de servidores presentes na atribuição', () => {
-    expect([...etiquetas.keys()]).toEqual(['Abel', 'Terezinha']);
+    expect([...etiquetas.entries()]).toEqual([[2, { id: 10, nome: 'CCV_Abel' }], [9, { id: 20, nome: 'CCV_Terezinha' }]]);
   });
 
   it('com etiqueta vinculada a auditoria compara o nome exato', () => {
@@ -349,6 +358,51 @@ describe('etiquetagem por dígito', () => {
     expect(plano.map((i) => i.numeroProcesso)).toEqual(['A', 'C']);
     expect(plano[0]).toMatchObject({ servidor: 'Abel', inserir: { id: 10 }, remover: [] });
     expect(plano[1]).toMatchObject({ servidor: 'Terezinha', inserir: { id: 20 }, remover: [{ id: 10 }] });
+  });
+});
+
+describe('etiqueta por dígito — mesmo servidor com duas etiquetas', () => {
+  const atribuicoes = [
+    { digito: 0, servidor: 'Abel', etiqueta: { id: 49, nome: 'CCV_Abel_0' } },
+    { digito: 2, servidor: 'ABEL', etiqueta: { id: 53, nome: 'CCV_Abel_2' } },
+    { digito: 5, servidor: 'Carol', etiqueta: { id: 49, nome: 'CCV_Abel_0' } },
+  ];
+  const mapa = montarMapaAtribuicoes(atribuicoes);
+  const etiquetas = montarMapaEtiquetas(atribuicoes, mapa);
+
+  it('vincula a etiqueta de cada dígito e recusa etiqueta já usada por outro servidor', () => {
+    expect([...etiquetas.entries()]).toEqual([[0, { id: 49, nome: 'CCV_Abel_0' }], [2, { id: 53, nome: 'CCV_Abel_2' }]]);
+  });
+
+  it('agrupa os dois dígitos na mesma planilha e aplica a etiqueta do dígito do processo', () => {
+    const d0 = procBase({ idProcesso: 1, numeroProcesso: 'A', digito: 0, etiquetas: [] });
+    const d2 = procBase({ idProcesso: 2, numeroProcesso: 'B', digito: 2, etiquetas: ['CCV_Abel_0'] });
+    const d2ok = procBase({ idProcesso: 3, numeroProcesso: 'C', digito: 2, etiquetas: ['CCV_Abel_2', 'CCV_Abel'] });
+    const { porServidor } = distribuirPorServidor([d0, d2, d2ok], mapa, etiquetas);
+
+    expect([...porServidor.keys()]).toEqual(['Abel', 'Carol']);
+    expect(porServidor.get('Abel')).toHaveLength(3);
+    expect(d2.flags).toEqual(expect.arrayContaining([FLAGS.SEM_ETIQUETA_DIGITO, FLAGS.DIGITO_DIVERGENTE]));
+    expect(d2ok.flags).toEqual([]);
+
+    const plano = planejarEtiquetagem(porServidor, etiquetas);
+    expect(plano).toEqual([
+      { idProcesso: 1, numeroProcesso: 'A', servidor: 'Abel', inserir: { id: 49, nome: 'CCV_Abel_0' }, remover: [] },
+      { idProcesso: 2, numeroProcesso: 'B', servidor: 'Abel', inserir: { id: 53, nome: 'CCV_Abel_2' }, remover: [{ id: 49, nome: 'CCV_Abel_0' }] },
+    ]);
+  });
+
+  it('mesma etiqueta em dígitos do mesmo servidor não é removida entre eles', () => {
+    const atrib = [
+      { digito: 1, servidor: 'Ana', etiqueta: { id: 7, nome: 'CCV_Ana' } },
+      { digito: 3, servidor: 'ana', etiqueta: { id: 7, nome: 'CCV_Ana' } },
+    ];
+    const m = montarMapaAtribuicoes(atrib);
+    const e = montarMapaEtiquetas(atrib, m);
+    const p = procBase({ digito: 3, etiquetas: ['CCV_Ana'] });
+    const { porServidor } = distribuirPorServidor([p], m, e);
+    expect(p.flags).toEqual([]);
+    expect(planejarEtiquetagem(porServidor, e)).toEqual([]);
   });
 });
 
@@ -379,11 +433,20 @@ describe('configuração da automação por dígito', () => {
     expect(validarConfigDigito({ servidores: [], padroesFilaEspera: 'x' }).erros[0]).toMatch(/padroesFilaEspera/);
   });
 
-  it('rejeita corpo inválido, modo desconhecido e servidor repetido', () => {
+  it('rejeita corpo inválido e modo desconhecido', () => {
     expect(validarConfigDigito(null).erros).toHaveLength(1);
     expect(validarConfigDigito({ servidores: [], modoDigito: 'x' }).erros).toContain('modoDigito inválido.');
-    const rep = validarConfigDigito({ servidores: [{ nome: 'Ana', digitos: [1] }, { nome: 'ana', digitos: [2] }] });
-    expect(rep.erros[0]).toMatch(/repetido/);
+  });
+
+  it('aceita o mesmo servidor em várias linhas, cada uma com sua etiqueta', () => {
+    const { config, erros } = validarConfigDigito({ servidores: [
+      { nome: 'Abel', digitos: [0], etiqueta: { id: 49, nome: 'CCV_Abel_0' } },
+      { nome: 'ABEL', digitos: [2], etiqueta: { id: 53, nome: 'CCV_Abel_2' } },
+      { nome: 'abel', digitos: [4], etiqueta: { id: 49, nome: 'CCV_Abel_0' } },
+      { nome: 'Carol', digitos: [5], etiqueta: { id: 53, nome: 'CCV_Abel_2' } },
+    ] });
+    expect(erros).toEqual([]);
+    expect(config?.servidores.map((s) => s.etiqueta?.id)).toEqual([49, 53, 49, undefined]);
   });
 
   it('chave é por CPF e perfil, com fallback no idUsuario', () => {

@@ -137,21 +137,31 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
   const atribuicoesValidas = useMemo(
     () => servidores
       .filter((s) => s.nome.trim())
-      .flatMap((s) => s.digitos.map((digito) => ({ digito, servidor: s.nome.trim() }))),
+      .flatMap((s) => s.digitos.map((digito) => ({
+        digito,
+        servidor: s.nome.trim(),
+        ...(s.etiqueta ? { etiqueta: { id: s.etiqueta.id, nome: s.etiqueta.nomeTag } } : {}),
+      }))),
     [servidores],
   );
 
-  const servidoresConhecidos = useMemo(
-    () => [...new Set(atribuicoesValidas.map((a) => a.servidor))],
-    [atribuicoesValidas],
-  );
+  const resumoServidores = useMemo(() => {
+    const grupos = new Map<string, { nome: string; digitos: number[]; etiquetas: string[]; semEtiqueta: boolean }>();
+    for (const s of servidores) {
+      const nome = s.nome.trim();
+      if (!nome || s.digitos.length === 0) continue;
+      const chave = normalizar(nome);
+      const grupo = grupos.get(chave) ?? { nome, digitos: [], etiquetas: [], semEtiqueta: false };
+      grupo.digitos.push(...s.digitos);
+      const etq = s.etiqueta ? safeStr(s.etiqueta.nomeTagCompleto) || safeStr(s.etiqueta.nomeTag) : '';
+      if (etq && !grupo.etiquetas.includes(etq)) grupo.etiquetas.push(etq);
+      if (!s.etiqueta) grupo.semEtiqueta = true;
+      grupos.set(chave, grupo);
+    }
+    return [...grupos.values()].map((g) => ({ ...g, digitos: g.digitos.sort((a, b) => a - b) }));
+  }, [servidores]);
 
-  const etiquetasServidor = useMemo(
-    () => servidores
-      .filter((s) => s.nome.trim() && s.digitos.length > 0 && s.etiqueta)
-      .map((s) => ({ servidor: s.nome.trim(), etiqueta: { id: s.etiqueta!.id, nome: s.etiqueta!.nomeTag } })),
-    [servidores],
-  );
+  const temEtiquetaVinculada = atribuicoesValidas.some((a) => a.etiqueta);
 
   const digitosSemServidor = DIGITOS.filter((d) => !atribuicoesValidas.some((a) => a.digito === d));
 
@@ -180,20 +190,19 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
   // Etiquetas salvas viram objetos da sessão atual; as que sumiram do perfil ficam de fora com aviso.
   const aplicarConfig = useCallback((cfg: ConfigAutomacaoDigito) => {
     const perdidas: string[] = [];
-    const lista: ServidorDigitos[] = cfg.servidores.map((s) => {
+    const lista: ServidorDigitos[] = (Array.isArray(cfg?.servidores) ? cfg.servidores : []).map((s) => {
       let etiqueta: EtiquetaPJE | undefined;
       if (s.etiqueta) {
-        etiqueta = etiquetas.find((e) => e?.id === s.etiqueta!.id)
-          ?? etiquetas.find((e) => normalizar(safeStr(e?.nomeTag)) === normalizar(s.etiqueta!.nome));
+        etiqueta = etiquetas.find((e) => e?.id === s.etiqueta!.id);
         if (!etiqueta) perdidas.push(`${s.etiqueta.nome} (${s.nome || 'sem nome'})`);
       }
-      return { nome: s.nome, digitos: [...s.digitos], etiqueta };
+      return { nome: s.nome ?? '', digitos: Array.isArray(s.digitos) ? [...s.digitos] : [], etiqueta };
     });
     setServidores(lista.length > 0 ? lista : [{ nome: '', digitos: [] }]);
-    setModoDigito(cfg.modoDigito);
-    setIgnoradas(cfg.tarefasIgnoradas.map((nome) => ({ nome, favorita: false })));
-    setFormato(cfg.formato);
-    setReduzida(cfg.reduzida);
+    setModoDigito(cfg.modoDigito ?? 'sequencial');
+    setIgnoradas((cfg.tarefasIgnoradas ?? []).map((nome) => ({ nome, favorita: false })));
+    setFormato(cfg.formato === 'zip' ? 'zip' : 'xlsx');
+    setReduzida(cfg.reduzida === true);
     setPadroesFila(cfg.padroesFilaEspera ?? null);
     setAvisoConfig(perdidas.length > 0 ? `Etiqueta(s) não encontrada(s) neste perfil e desvinculada(s): ${perdidas.join(', ')}.` : null);
   }, [etiquetas]);
@@ -206,7 +215,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     let ativo = true;
     obterConfigDigito(sessionId)
       .then((cfg) => {
-        if (!ativo || !cfg) return;
+        if (!ativo || !cfg || !Array.isArray(cfg.servidores)) return;
         setConfigSalva(cfg);
         if (!formularioTocado.current) aplicarConfig(cfg);
       })
@@ -245,7 +254,8 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
   }, [configSalva, aplicarConfig]);
 
   const donoDoDigito = (digito: number) => servidores.findIndex((s) => s.digitos.includes(digito));
-  const donoDaEtiqueta = (id: number) => servidores.findIndex((s) => s.etiqueta?.id === id);
+  const donoDaEtiqueta = (id: number, idx: number) => servidores.find((s, i) => i !== idx && s.etiqueta?.id === id
+    && normalizar(s.nome) !== normalizar(servidores[idx].nome));
 
   const setNome = useCallback((idx: number, nome: string) => {
     formularioTocado.current = true;
@@ -257,7 +267,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     formularioTocado.current = true;
     setServidores((prev) => prev.map((s, i) => {
       if (i === idx) return { ...s, etiqueta };
-      return etiqueta && s.etiqueta?.id === etiqueta.id ? { ...s, etiqueta: undefined } : s;
+      return etiqueta && s.etiqueta?.id === etiqueta.id && normalizar(s.nome) !== normalizar(prev[idx].nome) ? { ...s, etiqueta: undefined } : s;
     }));
   }, []);
 
@@ -336,7 +346,6 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
         formato,
         reduzida,
         modoDigito,
-        etiquetasServidor: etiquetasServidor.length > 0 ? etiquetasServidor : undefined,
         pesos: padroesFila ? { padroesFilaEspera: padroesFila } : undefined,
       });
       setJob({
@@ -350,7 +359,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
     } finally {
       setIniciando(false);
     }
-  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, reduzida, modoDigito, etiquetasServidor, padroesFila, startPolling, salvarConfig]);
+  }, [credenciais, sessionId, perfilIndice, atribuicoesValidas, ignoradas, formato, reduzida, modoDigito, padroesFila, startPolling, salvarConfig]);
 
   const handleCancelar = useCallback(async () => {
     if (!job) return;
@@ -401,7 +410,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
 
   const planoEtq = job?.status === 'completed' ? job.resumo?.etiquetagem : undefined;
   const podeEtiquetar = !!planoEtq && planoEtq.processosAfetados > 0 && !etiquetagemAtiva;
-  const servidoresSemEtiqueta = servidores.filter((s) => s.nome.trim() && s.digitos.length > 0 && !s.etiqueta).map((s) => s.nome.trim());
+  const servidoresSemEtiqueta = resumoServidores.filter((g) => g.semEtiqueta).map((g) => g.nome);
 
   const barraAtiva = jobAtivo || etiquetagemAtiva;
   const barraMensagem = etiquetagemAtiva ? (etiquetagem?.message ?? '') : (job?.message ?? '');
@@ -422,7 +431,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="num-badge">{jobAtivo ? '⏳' : '✓'}</span>
-              <span className="eyebrow">{ROTULO} · {servidoresConhecidos.length} servidor(es) · {formato === 'zip' ? 'zip por servidor' : 'arquivo único'}{reduzida ? ' · reduzida' : ''}</span>
+              <span className="eyebrow">{ROTULO} · {resumoServidores.length} servidor(es) · {formato === 'zip' ? 'zip por servidor' : 'arquivo único'}{reduzida ? ' · reduzida' : ''}</span>
             </div>
             {!barraAtiva && (
               <div className="flex gap-2">
@@ -435,6 +444,22 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
               </div>
             )}
           </div>
+          {job.status === 'completed' && job.fileName && (
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Formato do download">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Baixar como</span>
+              {([['xlsx', 'Arquivo único', FileSpreadsheet], ['zip', 'Um por servidor (.zip)', FileArchive]] as const).map(([valor, rotulo, Icone]) => (
+                <button
+                  key={valor}
+                  type="button"
+                  aria-pressed={formato === valor}
+                  onClick={() => setFormato(valor)}
+                  className={`btn px-3 py-1.5 text-xs ${formato === valor ? 'btn-primary' : 'btn-ghost'}`}
+                >
+                  <Icone size={13} /> {rotulo}
+                </button>
+              ))}
+            </div>
+          )}
           <ProgressoJob
             status={job.status}
             progress={job.progress}
@@ -442,7 +467,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
             processedCount={job.processedCount}
             totalProcesses={job.totalProcesses}
             onCancelar={jobAtivo ? handleCancelar : undefined}
-            onDownload={job.status === 'completed' && job.fileName ? () => downloadPlanilhaDigito(job.jobId) : undefined}
+            onDownload={job.status === 'completed' && job.fileName ? () => downloadPlanilhaDigito(job.jobId, formato) : undefined}
           />
           {job.status === 'completed' && job.resumo && (
             <ResumoDistribuicao resumo={job.resumo} comEtiquetagem={!!planoEtq} />
@@ -646,7 +671,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
                       etiquetas={etiquetas}
                       selecionada={s.etiqueta}
                       onSelecionar={(e) => setEtiqueta(idx, e)}
-                      donoDe={(id) => { const d = donoDaEtiqueta(id); return d !== -1 && d !== idx ? (servidores[d].nome.trim() || 'outro servidor') : null; }}
+                      donoDe={(id) => { const dono = donoDaEtiqueta(id, idx); return dono ? (dono.nome.trim() || 'outro servidor') : null; }}
                       rotulo={s.nome.trim() || `servidor ${idx + 1}`}
                     />
                   </div>
@@ -658,15 +683,11 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
             </div>
             {atribuicoesValidas.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {servidoresConhecidos.map((nome) => {
-                  const digitos = atribuicoesValidas.filter((a) => a.servidor === nome).map((a) => a.digito);
-                  const etq = servidores.find((s) => s.nome.trim() === nome)?.etiqueta;
-                  return (
-                    <span key={nome} className="chip bg-emerald-50 text-emerald-700">
-                      {nome}: dígito(s) {digitos.join(', ')}{etq ? ` · ${safeStr(etq.nomeTag)}` : ''}
-                    </span>
-                  );
-                })}
+                {resumoServidores.map((g) => (
+                  <span key={normalizar(g.nome)} className="chip bg-emerald-50 text-emerald-700">
+                    {g.nome}: dígito(s) {g.digitos.join(', ')}{g.etiquetas.length > 0 ? ` · ${g.etiquetas.join(', ')}` : ''}
+                  </span>
+                ))}
                 {digitosSemServidor.length > 0 && (
                   <span className="chip bg-slate-100 text-slate-600">
                     Sem servidor: {digitosSemServidor.join(', ')}
@@ -674,7 +695,7 @@ export function TelaPlanilhaDigito({ sessionId, tarefas, etiquetas, credenciais,
                 )}
               </div>
             )}
-            {etiquetasServidor.length > 0 && servidoresSemEtiqueta.length > 0 && (
+            {temEtiquetaVinculada && servidoresSemEtiqueta.length > 0 && (
               <p className="mt-2 text-xs text-brass-600">
                 Sem etiqueta vinculada (não serão etiquetados): {servidoresSemEtiqueta.join(', ')}.
               </p>
